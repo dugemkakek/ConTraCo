@@ -83,6 +83,8 @@ class GateioRestProvider:
         self._timeout = timeout
         self._max_retries = max_retries
         self._client: httpx.AsyncClient | None = None
+        self._pairs_cache: list[dict] | None = None
+        self._cache_ts: float = 0
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -171,6 +173,41 @@ class GateioRestProvider:
         except Exception:  # noqa: BLE001
             pass
         return None
+
+    async def get_all_spot_pairs(self) -> list[dict]:
+        import time
+        now = time.time()
+        if self._pairs_cache and (now - self._cache_ts) < 3600:
+            return self._pairs_cache
+
+        raw = await self.list_spot_pairs()
+        pairs = []
+        for p in raw:
+            if p.get("trade_status") == "tradable" and p.get("quote") == "USDT":
+                base = p.get("base", "")
+                if 2 <= len(base) <= 6:
+                    pairs.append({
+                        "id": p["id"],
+                        "base": base,
+                        "quote": "USDT",
+                        "venue": "gateio",
+                        "display": f"{base}/USDT",
+                        "volume_24h_quote": float(p.get("volume_24h_quote", 0)),
+                        "price": None,
+                        "change_24h_pct": None,
+                        "tick_size": float(p.get("tick_size", 0)) if p.get("tick_size") else None,
+                        "min_qty": float(p.get("min_qty", 0)) if p.get("min_qty") else None,
+                    })
+        pairs.sort(key=lambda x: -x["volume_24h_quote"])
+        self._pairs_cache = pairs
+        self._cache_ts = now
+        return pairs
+
+    async def search_pairs(self, query: str, limit: int = 50) -> list[dict]:
+        pairs = await self.get_all_spot_pairs()
+        q = query.lower()
+        matched = [p for p in pairs if q in p["base"].lower() or q in p["id"].lower()]
+        return matched[:limit]
 
 
 __all__ = [

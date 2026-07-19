@@ -5,10 +5,18 @@ from __future__ import annotations
 from app.services.market_data.base import MarketDataProvider
 from app.services.market_data.gateio_rest import GateioRestProvider
 from app.services.market_data.mock_provider import MockMarketDataProvider
+from app.services.market_data.binance_rest import BinanceRestProvider
+from app.services.market_data.bybit_rest import BybitRestProvider
+from app.services.market_data.kraken_rest import KrakenRestProvider
+from app.services.market_data.okx_rest import OkxRestProvider
 
 _VENUE_REGISTRY: dict[str, type[MarketDataProvider]] = {
     "mock": MockMarketDataProvider,
     "gateio": GateioRestProvider,
+    "binance": BinanceRestProvider,
+    "bybit": BybitRestProvider,
+    "kraken": KrakenRestProvider,
+    "okx": OkxRestProvider,
 }
 
 

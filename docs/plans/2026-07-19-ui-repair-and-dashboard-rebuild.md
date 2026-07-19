@@ -11,12 +11,33 @@
 
 The project lives at `F:\Programs\confluence-trading-consultant`.
 Backend is FastAPI on `:8000`, frontend is Next.js on `:3000`. They are
-already wired up and running. Your job is to add code that **integrates
-into the existing scaffold** — don't restructure files, don't rename
-existing exports, don't touch the engine or models. Only add new files
-and add UI/state inside the existing page shells.
+already wired up and running.
 
-Before you start, read these files end-to-end so you match style:
+### What's already built (backend, in this session)
+
+**6 venue providers registered**: mock, gateio, **binance, bybit, kraken, okx**.
+Each has `get_all_spot_pairs()` and `search_pairs()` — cached 1h, sorted by
+24h volume. The full provider list is at `apps/api/app/services/market_data/registry.py`.
+
+**Aggregate endpoint**: `GET /api/v1/market/top?limit=25` returns the top N
+pairs by volume across ALL venues, deduplicated by `base_venue`. Also
+`GET /api/v1/market/tv-prefixes` returns the TradingView exchange prefix for
+each venue (GATEIO, BINANCE, BYBIT, KRAKEN, OKX).
+
+**TV prefix map** (use this in `TradingViewChart.tsx`):
+
+| venue_id | TV prefix | Symbol format |
+|----------|-----------|---------------|
+| gateio | GATEIO | GATEIO:BTCUSDT |
+| binance | BINANCE | BINANCE:BTCUSDT |
+| bybit | BYBIT | BYBIT:BTCUSDT |
+| kraken | KRAKEN | KRAKEN:XBTUSDT |
+| okx | OKX | OKX:BTC-USDT |
+
+**You do NOT need to build these.** They're done. Focus on the frontend
+and remaining tasks below.
+
+### Files you must read before starting
 
 - `apps/web/lib/api.ts` — every backend route the frontend can call
 - `apps/web/lib/auth-context.tsx` — how to gate pages
@@ -345,49 +366,88 @@ page — list should persist.
 
 ---
 
-### Task 4: Rebuild the dashboard as a real overview
+### Task 4: Rebuild the dashboard as a real overview — TOP 25 AS CHART SOURCE
 
 **Why it matters:** This is the most important page. Right now it's a
 chart with a tiny market card. A real trading terminal dashboard has
-many panels.
+many panels. And per your requirement — the main chart defaults to the
+#1 pair by volume from the aggregate top-25 across all venues.
 
-**Modify** `apps/web/app/dashboard/page.tsx`. Keep the file name, replace
-the contents.
+**New data flow:**
+1. On mount, fetch `GET /api/v1/market/top?limit=25` — returns top pairs
+   sorted by volume across binance/bybit/gate/kraken/okx.
+2. Default the chart to the #1 pair (usually BTC/USDT from Binance).
+3. Show the top-25 as a scrollable ticker strip below the chart.
+4. The venue selector lets you pick which exchange's top-25 to view,
+   OR "All Venues" (the aggregate).
 
-**Layout (CSS grid):**
+**New frontend API** — `apps/web/lib/api.ts`:
+
+```ts
+export type TopPair = {
+  id: string; base: string; display: string;
+  venue: string; volume_24h_quote: number;
+  price: number | null; change_24h_pct: number | null;
+};
+
+export function getTopPairs(limit = 25): Promise<{timestamp: string; top: TopPair[]}> {
+  return request(`/api/v1/market/top?limit=${limit}`);
+}
+
+export function getTVPrefixes(): Promise<Record<string, string>> {
+  return request("/api/v1/market/tv-prefixes");
+}
+```
+
+**Dashboard layout:**
 
 ```
-┌────────────────────────────────────────────────────────┐
-│ TOP STRIP: market overview cards (5-6 stat cards)      │
-│ ┌────────────┬────────────┬────────────┬──────────────┐│
-│ │BTC $65k    │Mkt Cap $2T │Fear & Greed│24h Vol       ││
-│ │+2.3%       │+1.1%       │65 Greed    │$85B          ││
-│ └────────────┴────────────┴────────────┴──────────────┘│
-├────────────────────────────────────────────────────────┤
-│ LEFT (25%)      │  CENTER (50%)      │ RIGHT (25%)     │
-│                 │                    │                 │
-│ Watchlist       │ TV chart (1h)      │ Analysis        │
-│ - BTC/USDT      │ (full height)      │ tabs for        │
-│ - ETH/USDT      │                    │ current symbol  │
-│ - SOL/USDT      │ ┌────────────────┐ │                 │
-│                 │ │                │ │ • Gates         │
-│ ┌──────────┐    │ │                │ │ • Models        │
-│ │+ Add     │    │ │                │ │ • History       │
-│ └──────────┘    │ └────────────────┘ │                 │
-│                 │                    │                 │
-│ Market           │ Symbol: BTC/USDT  │ [Run Analysis] │
-│ Condition       │ [1m 5m 1h 4h 1d]  │                 │
-│ (regime card)   │                    │                 │
-├─────────────────┴────────────────────┴─────────────────┤
-│ BOTTOM (33% height each)                               │
-│ ┌──────────────────┬────────────────────────────────┐ │
-│ │ Ticker Grid      │ Top Movers (24h)               │ │
-│ │ BTC, ETH, SOL,.. │  +BNB +12%  -DOGE -8%          │ │
-│ │ each with spark  │                                │ │
-│ └──────────────────┴────────────────────────────────┘ │
-│ Scanner strip (last batch result, click to expand)     │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ TOP STRIP: Market overview cards (aggregate stats)         │
+│ ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┐        │
+│ │BTC   │ETH   │SOL   │BNB   │XRP   │ADA   │DOGE  │← top 7│
+│ │$65k  │$3.5k │$145  │$580  │$0.57 │$0.42 │$0.12 │quick  │
+│ │+2.3% │-1.1% │+5.2% │+0.8% │-0.3% │+1.7% │-2.1% │stats  │
+│ └──────┴──────┴──────┴──────┴──────┴──────┴──────┘        │
+├────────────────────────────────────────────────────────────┤
+│ LEFT (20%)         │  CENTER (55%)     │ RIGHT (25%)       │
+│                    │                   │                   │
+│ Watchlist          │ TV chart (1h)     │ Analysis          │
+│ with venue icons   │ for current sym   │ tabs for          │
+│ - BTC/USDT  🟢    │                   │ current symbol    │
+│ - ETH/USDT  🔵    │ Default: #1 from  │ • Gates           │
+│ - + Add           │ top-25 (auto)     │ • Models          │
+│                    │                   │ • History         │
+│ Market Condition   │ Symbol/tf/venue   │                   │
+│ (regime card)      │ bar at top        │ [Run Analysis]   │
+│                    │                   │                   │
+├────────────────────┴───────────────────┴──────────────────┤
+│ TOP-25 TICKER STRIP (horizontal scroll)                   │
+│ ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐│
+│ │ #1   │ #2   │ #3   │ #4   │ #5   │... 22 more         ││
+│ │BTC/US│ETH/US│SOL/US│BNB/US│XRP/US│ vol bar per card   ││
+│ │✓Bin  │✓Bybit│✓OKX  │✓Gate │✓Kra │ click → chart      ││
+│ └──────┴──────┴──────┴──────┴──────┴────────────────────┘│
+├────────────────────────────────────────────────────────────┤
+│ BOTTOM: Movers panel (24h biggest gainers/losers) + Scanner│
+│ ┌───────────────────┬────────────────────────────────────┐│
+│ │ Top Gainers       │  Scanner (last batch + live)       ││
+│ │ +BNB +12%         │  Progress / results                ││
+│ │ -DOGE -8%         │                                    ││
+│ └───────────────────┴────────────────────────────────────┘│
+└────────────────────────────────────────────────────────────┘
 ```
+
+**The chart always uses the TV prefix.** If the current pair is
+BTC/USDT on Binance, the TradingView widget loads
+`BINANCE:BTCUSDT`. This works for any venue because TradingView knows
+all of them.
+
+**Verify:** Open `/dashboard`. Default chart shows top-25 #1 pair.
+Click any ticker in the strip — chart switches. The top-25 refreshes
+every 60s.
+
+
 
 **Code shape (skeleton):**
 
@@ -749,6 +809,19 @@ Don't touch these in this pass — they're separate future plans:
 - Auth: add OAuth (Google/Discord) — separate task
 - Notifications: SMS/email/Telegram/Discord dispatch (Phase 15 backend)
   — the alert engine exists, the dispatcher doesn't yet
+- Adding more venues (Coinbase, KuCoin, HTX, Mexc, Bitget) — interface
+  pattern is established; they're a 1h copy-paste each
+
+## What's already done (don't rebuild)
+
+| Item | Status | Files |
+|------|--------|-------|
+| 6 venue providers | ✅ Built and registered | `binance_rest.py`, `bybit_rest.py`, `kraken_rest.py`, `okx_rest.py`, `gateio_rest.py`, `registry.py` |
+| Top-25 aggregate endpoint | ✅ Built | `apps/api/app/api/aggregate.py` |
+| TV prefix map endpoint | ✅ Built | `GET /api/v1/market/tv-prefixes` |
+| Symbol all/search on all venues | ✅ Built | Each provider has `get_all_spot_pairs()` + `search_pairs()` |
+| Gate.io full pair listing | ✅ Built | `gateio_rest.py` now has `get_all_spot_pairs()` |
+| Progress changelog | ✅ Built | `docs/progress/2026-07-19-ui-repair.md` |
 
 ---
 

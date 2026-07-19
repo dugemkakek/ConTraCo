@@ -54,6 +54,7 @@ from app.api.orderbook import router as orderbook_router
 from app.api.alerts import router as alerts_router
 from app.services.realtime.ws_hub import manager as ws_manager
 from app.api.analytics import router as analytics_router
+from app.api.aggregate import router as aggregate_router
 from app.db import redis_client
 from app.services.llm import current_provider
 from app.services.market_data.factory import build_stream
@@ -137,6 +138,7 @@ app.include_router(fundamentals_router)
 app.include_router(orderbook_router)
 app.include_router(alerts_router)
 app.include_router(analytics_router)
+app.include_router(aggregate_router)
 
 
 @app.get("/health")
