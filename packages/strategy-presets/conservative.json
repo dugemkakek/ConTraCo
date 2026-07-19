@@ -1,0 +1,36 @@
+{
+  "name": "conservative",
+  "description": "Higher thresholds, larger R:R only.",
+  "minimum_data_quality": 0.97,
+  "minimum_quorum_gate_count": 5,
+  "minimum_direction_score": 65,
+  "minimum_model_agreement": 0.7,
+  "minimum_risk_reward": 2.5,
+  "maximum_stop_atr_multiple": 2.5,
+  "maximum_conflicting_model_confidence": 0.6,
+  "composite_gate_weight": 0.55,
+  "composite_model_weight": 0.45,
+  "gates": {
+    "market_regime": 0.18,
+    "classical_ta": 0.2,
+    "market_structure": 0.2,
+    "volume_momentum": 0.14,
+    "fundamental_context": 0.13,
+    "risk_tradeability": 0.15
+  },
+  "directional_roles": {
+    "technical_analyst":     { "weight": 0.34, "confidence_cap": 1.00 },
+    "market_context_analyst":{ "weight": 0.22, "confidence_cap": 1.00 },
+    "risk_reviewer":         { "weight": 0.24, "confidence_cap": 0.35 },
+    "skeptical_reviewer":    { "weight": 0.20, "confidence_cap": 0.35 }
+  },
+  "non_directional_roles": {
+    "trade_planner":      { "runs_after_decision": true },
+    "synthesis_reviewer": { "runs_after_decision": true }
+  },
+  "hard_veto_risk_flags": [
+    "data_integrity",
+    "liquidity_trap",
+    "manipulation_suspected"
+  ]
+}

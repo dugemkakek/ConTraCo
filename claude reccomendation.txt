@@ -1,0 +1,213 @@
+## 12. Decision Engine
+
+The decision engine is deterministic and transparent. Every number that
+feeds the final decision must be traceable to this section — no
+implementation may introduce an undocumented aggregation step.
+
+### Decision stages
+
+```text
+Validate data
+  -> Compute technical/pattern/context gates
+  -> Apply hard vetoes (gate-level)
+  -> Request AI council opinions (directional roles only)
+  -> Validate AI outputs
+  -> Measure model agreement
+  -> Calculate Gate Score and Model Score
+  -> Calculate Composite Direction Score
+  -> Apply AI-derived vetoes and confidence caps
+  -> Determine final state
+  -> Generate conditional trade plan (trade_planner, non-directional)
+  -> Attach synthesis summary (synthesis_reviewer, non-directional)
+  -> Run risk validation
+  -> Produce final human-readable decision
+```
+
+### Role classification
+
+Only four of the six council roles vote on direction. `trade_planner` and
+`synthesis_reviewer` never contribute to the Composite Direction Score —
+their `role_weight` field must be treated as a UI/cost-tracking value only
+and must not appear in the direction-score formula below.
+
+| Role | Directional? | Contributes to |
+|---|---|---|
+| `technical_analyst` | Yes | Model Score |
+| `market_context_analyst` | Yes | Model Score |
+| `risk_reviewer` | Yes (capped, veto-eligible) | Model Score, veto |
+| `skeptical_reviewer` | Yes (capped, veto-eligible) | Model Score, veto |
+| `trade_planner` | No | Trade plan generation only, runs after decision |
+| `synthesis_reviewer` | No | Human-readable summary only, runs after decision |
+
+### Step 1 — Gate Score
+
+For each deterministic gate `g` with `status != UNAVAILABLE`:
+
+```text
+gate_contribution[g] = gate_score[g] * gate_weight[g] * gate_confidence[g]
+```
+
+`gate_score` is on [-100, 100]; `gate_weight` and `gate_confidence` are on
+[0, 1]. `UNAVAILABLE` gates are excluded from the sum and from
+`gate_weight_sum` below (renormalization, not zero-fill), and are logged as
+a completeness penalty (Step 5).
+
+```text
+Gate Score = 100 * (sum(gate_contribution) / sum(gate_weight[g] for g in available_gates))
+```
+
+Gate Score is normalized back onto [-100, 100].
+
+### Step 2 — Model Score
+
+For each directional role `r` with a **valid** model output
+(`status == VALID`, i.e. passed schema + evidence-ID validation):
+
+```text
+direction_value[r]   = LONG: +1, SHORT: -1, WAIT/AVOID: 0
+effective_confidence[r] = min(model_confidence[r], confidence_cap[r])
+model_contribution[r] = direction_value[r] * role_weight[r]
+                         * effective_confidence[r]
+                         * evidence_completeness[r]
+```
+
+`confidence_cap[r]` is a new required config field (see Config below).
+For `technical_analyst` and `market_context_analyst`, default cap = `1.0`
+(uncapped). For `risk_reviewer` and `skeptical_reviewer`, default cap is
+configurable and defaults to `0.35` — meaning they can meaningfully drag
+a score down (via negative `direction_value`, uncapped in the negative
+direction) but cannot themselves push confidence up past a low ceiling.
+The cap applies only to the magnitude used in a *positive* contribution
+direction; a risk/skeptical role flagging `SHORT` on a LONG-leaning setup
+is not capped, since suppressing bearish signal from the skeptic roles
+would defeat their purpose.
+
+Invalid or missing model outputs for a role are excluded from the sum and
+recorded as a completeness gap (Step 5); they are never treated as a `0`
+(neutral) vote, since that would silently understate disagreement.
+
+```text
+Model Score = 100 * (sum(model_contribution) / sum(role_weight[r] for r in valid_roles))
+```
+
+Model Score is normalized back onto [-100, 100].
+
+### Step 3 — Model Agreement
+
+Agreement is computed only over valid directional roles, weighted by
+`role_weight`, and measures how much of the directional weight agrees
+with the majority-weighted direction:
+
+```text
+majority_direction = sign(Model Score)
+agreeing_weight = sum(role_weight[r] for r in valid_roles
+                       if direction_value[r] == majority_direction)
+total_weight     = sum(role_weight[r] for r in valid_roles)
+
+Model Agreement = agreeing_weight / total_weight
+```
+
+`WAIT`/`AVOID` votes (`direction_value == 0`) never count as "agreeing"
+with a nonzero majority direction; they always reduce `Model Agreement`.
+
+### Step 4 — Composite Direction Score
+
+```text
+Composite Direction Score =
+    (Gate Score  * composite_gate_weight)
+  + (Model Score * composite_model_weight)
+```
+
+Where `composite_gate_weight + composite_model_weight = 1.0` and both are
+new top-level config fields (see Config below; default 0.55 / 0.45,
+gates weighted slightly higher since they're non-hallucinating by
+construction). This is the single number compared against
+`minimum_direction_score`. It is always on the same [-100, 100] scale as
+its two inputs.
+
+### Step 5 — Completeness and Quorum
+
+```text
+quorum_gate_count  = count(gates where status in [PASS, FAIL, NEUTRAL])
+quorum_role_count  = count(directional roles where status == VALID)
+
+Data Completeness  = quorum_gate_count / total_configured_gates
+Model Completeness = quorum_role_count / total_directional_roles
+```
+
+Quorum requirement: `quorum_gate_count >= minimum_quorum_gate_count`.
+Gate F (`risk_tradeability`), because it is veto-only, always counts
+toward `quorum_gate_count` if it produced any status other than
+`UNAVAILABLE`, including `VETO`.
+
+If quorum is not met, the run terminates at `WAIT` with reason
+`INSUFFICIENT_QUORUM` before any composite score is computed.
+
+### Step 6 — Vetoes and caps
+
+Applied in this order, any one is sufficient to force `AVOID`:
+
+1. Any gate returns `status == VETO` (deterministic veto, e.g. Gate F).
+2. `risk_reviewer` or `skeptical_reviewer` sets a `risk_flags` entry
+   matching a configured hard-veto phrase list (e.g. `"data_integrity"`,
+   `"liquidity_trap"`) — this is the only path by which an AI role can
+   force `AVOID`, and it must be logged as an AI-triggered veto distinct
+   from a deterministic gate veto.
+3. `Model Agreement < minimum_model_agreement`.
+4. `Data Completeness < minimum_data_quality`.
+
+### Step 7 — Final states
+
+| State | Condition |
+|---|---|
+| `DATA_INVALID` | Data quality gate failed before analysis started |
+| `AVOID` | Any Step 6 veto/cap condition triggered |
+| `WAIT` | Quorum unmet, OR `abs(Composite Direction Score) < minimum_direction_score` |
+| `LONG_CANDIDATE` | Composite Direction Score >= `minimum_direction_score`, no veto |
+| `SHORT_CANDIDATE` | Composite Direction Score <= `-minimum_direction_score`, no veto |
+
+### Updated default configuration
+
+```json
+{
+  "minimum_data_quality": 0.95,
+  "minimum_quorum_gate_count": 4,
+  "minimum_direction_score": 55,
+  "minimum_model_agreement": 0.60,
+  "minimum_risk_reward": 2.0,
+  "maximum_stop_atr_multiple": 3.5,
+  "composite_gate_weight": 0.55,
+  "composite_model_weight": 0.45,
+  "gates": {
+    "market_regime": 0.18,
+    "classical_ta": 0.20,
+    "market_structure": 0.20,
+    "volume_momentum": 0.14,
+    "fundamental_context": 0.13,
+    "risk_tradeability": 0.15
+  },
+  "directional_roles": {
+    "technical_analyst":     { "weight": 0.34, "confidence_cap": 1.00 },
+    "market_context_analyst":{ "weight": 0.22, "confidence_cap": 1.00 },
+    "risk_reviewer":         { "weight": 0.24, "confidence_cap": 0.35 },
+    "skeptical_reviewer":    { "weight": 0.20, "confidence_cap": 0.35 }
+  },
+  "non_directional_roles": {
+    "trade_planner": { "runs_after_decision": true },
+    "synthesis_reviewer": { "runs_after_decision": true }
+  },
+  "hard_veto_risk_flags": [
+    "data_integrity",
+    "liquidity_trap",
+    "manipulation_suspected"
+  ]
+}
+```
+
+Note `directional_roles` weights now sum to 1.0 on their own (no
+`trade_planner`/`synthesis_reviewer` competing for share), and
+`composite_gate_weight + composite_model_weight` are explicit and sum to
+1.0. Configuration must be editable in UI, versioned, auditable, and
+exportable. A changed configuration applies only to future analysis runs,
+and every persisted `AnalysisRun` stores the exact config version used so
+Step 1–7 are fully reproducible from history.

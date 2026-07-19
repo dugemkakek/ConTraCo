@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+.next/
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment — secrets (DO NOT COMMIT)
+.env
+.env.local
+.env.production
+.env.development
+.env.staging
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Coverage / reports
+coverage/
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Hermes
+.hermes/
+
+# Compiled
+dist/
+build/
+*.egg-info/
+
+# Alembic
+alembic/versions/
+
+# Backups
+*.bak
+*.tar.gz
+
+# IDE / editor
+*.sublime-project
+*.sublime-workspace
