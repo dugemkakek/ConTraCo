@@ -19,7 +19,9 @@ from sqlalchemy.pool import StaticPool
 os.environ.setdefault("MARKET_DATA_PROVIDER", "mock")
 os.environ.setdefault("RUN_MIGRATIONS_ON_STARTUP", "0")
 
-# Clear all .pyc caches before importing app modules. Without this,
+# Ensure stub LLM for all tests (no real API calls)
+for _k in ("LLM_API_KEY", "INFERHUB_API_KEY", "INFERHUB_KEY"):
+    os.environ.pop(_k, None)
 # edits made during a long dev session would silently take effect only
 # after Python's bytecode-mtime check invalidated the cache — and
 # sometimes that check races with editors and test runs, leaving

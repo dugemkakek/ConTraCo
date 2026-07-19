@@ -25,11 +25,11 @@ async def build_context(db: Session, symbol: str) -> str:
     cutoff = now - timedelta(hours=24)
     news = db.execute(
         select(NewsItem)
-        .where(NewsItem.symbol_relevance.any(symbol))
         .where(NewsItem.created_at >= cutoff)
         .order_by(NewsItem.created_at.desc())
-        .limit(20)
+        .limit(50)
     ).scalars().all()
+    news = [n for n in news if symbol in n.symbol_relevance][:20]
 
     if news:
         scores = [n.sentiment_score for n in news if n.sentiment_score is not None]

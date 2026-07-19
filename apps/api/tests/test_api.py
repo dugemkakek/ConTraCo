@@ -70,7 +70,7 @@ async def test_run_analysis_creates_persisted_run(client, db_session):
     assert body["symbol"] == "BTC/USDT"
     assert body["status"] in {"PENDING", "RUNNING", "COMPLETED", "FAILED"}
     assert body["final_state"] in {s.value for s in FinalState}
-    assert len(body["gates"]) == 6
+    assert len(body["gates"]) == 9
     assert len(body["opinions"]) == 6
     assert body["decision"] is not None
 

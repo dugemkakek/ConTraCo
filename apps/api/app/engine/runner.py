@@ -263,10 +263,10 @@ async def run_analysis(
 
         db.commit()
 
-        # 7) WebSocket broadcast on notable final states
+        # 7) WebSocket broadcast on notable final states — soft fail
         try:
-            from app.main import ws_manager  # type: ignore[attr-defined]
-            await ws_manager.broadcast_to_user(
+            from app.services.realtime.ws_hub import manager as _ws
+            await _ws.broadcast_to_user(
                 str(user.id),
                 {
                     "type": "analysis_complete",

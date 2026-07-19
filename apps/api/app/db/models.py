@@ -141,6 +141,7 @@ class AnalysisRun(Base):
     opinions: Mapped[list["ModelOpinion"]] = relationship(back_populates="run", cascade="all, delete-orphan")
     decision: Mapped["Decision | None"] = relationship(back_populates="run", uselist=False, cascade="all, delete-orphan")
     trade_plan: Mapped["TradePlan | None"] = relationship(back_populates="run", uselist=False, cascade="all, delete-orphan")
+    config: Mapped["StrategyConfig | None"] = relationship(uselist=False)
 
 
 class GateResult(Base):
@@ -230,6 +231,10 @@ class JournalEntry(Base):
     pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     analysis_run_id: Mapped[int | None] = mapped_column(ForeignKey("analysis_runs.id"), nullable=True)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
     user: Mapped["User"] = relationship(back_populates="journal_entries")
 
@@ -279,6 +284,7 @@ class Order(Base):
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[OrderStatus] = mapped_column(SAEnum(OrderStatus), nullable=False)
     exchange_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("analysis_runs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
