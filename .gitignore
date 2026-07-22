@@ -62,3 +62,11 @@ alembic/versions/
 # IDE / editor
 *.sublime-project
 *.sublime-workspace
+
+# Hermes agent temp files (never commit)
+.hermes-tmp*/
+**/.hermes-tmp*/
+
+# Build artifacts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
