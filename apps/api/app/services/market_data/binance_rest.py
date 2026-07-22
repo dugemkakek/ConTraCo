@@ -106,7 +106,14 @@ class BinanceRestProvider:
         return timeframe in BINANCE_INTERVALS
 
     def supported_symbols(self) -> list[str]:
-        return []
+        return [
+            "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT",
+            "XRP/USDT", "DOGE/USDT", "ADA/USDT", "AVAX/USDT",
+            "LINK/USDT", "DOT/USDT", "MATIC/USDT", "TRX/USDT",
+            "ATOM/USDT", "UNI/USDT", "LTC/USDT", "NEAR/USDT",
+            "APT/USDT", "ARB/USDT", "OP/USDT", "SUI/USDT",
+            "PEPE/USDT", "WIF/USDT", "BONK/USDT", "FLOKI/USDT",
+        ]
 
     def supported_timeframes(self) -> list[str]:
         return list(BINANCE_INTERVALS.keys())

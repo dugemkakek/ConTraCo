@@ -1,9 +1,11 @@
 """Backtest API — CRUD + run endpoint for BacktestRun model."""
 
 
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
@@ -16,7 +18,66 @@ from app.engine.confluence_backtest import BacktestConfig, run_backtest as run_c
 from app.engine.strategy import get_active_spec
 from app.schemas.candle import Candle
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/backtest", tags=["backtest"])
+
+BINANCE_KLINES = "https://data-api.binance.vision/api/v3/klines"
+BINANCE_INTERVALS = {"15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
+
+
+async def _fetch_binance_candles(
+    db: Session, symbol: str, timeframe: str,
+    start: datetime, end: datetime,
+) -> int:
+    """Fetch candles from Binance and store in DB. Returns count inserted."""
+    pair = symbol.replace("/", "").upper()
+    interval = BINANCE_INTERVALS.get(timeframe, "1h")
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    inserted = 0
+
+    async with httpx.AsyncClient(timeout=15, verify=False) as client:
+        cursor = start_ms
+        while cursor < end_ms:
+            try:
+                resp = await client.get(BINANCE_KLINES, params={
+                    "symbol": pair, "interval": interval,
+                    "startTime": str(cursor), "endTime": str(end_ms),
+                    "limit": "1000",
+                })
+                if resp.status_code != 200:
+                    break
+                rows = resp.json()
+                if not rows:
+                    break
+                for k in rows:
+                    ot = datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc)
+                    exists = db.execute(
+                        select(HistoricalCandle.id)
+                        .where(HistoricalCandle.symbol == symbol.upper())
+                        .where(HistoricalCandle.venue == "binance")
+                        .where(HistoricalCandle.timeframe == timeframe)
+                        .where(HistoricalCandle.open_time == ot)
+                    ).first()
+                    if not exists:
+                        db.add(HistoricalCandle(
+                            symbol=symbol.upper(), venue="binance",
+                            timeframe=timeframe, open_time=ot,
+                            open=float(k[1]), high=float(k[2]),
+                            low=float(k[3]), close=float(k[4]),
+                            volume=float(k[5]),
+                        ))
+                        inserted += 1
+                cursor = rows[-1][0] + 1  # next ms after last candle
+                if len(rows) < 1000:
+                    break
+            except Exception as exc:
+                logger.warning("binance klines fetch failed: %s", exc)
+                break
+
+    if inserted:
+        db.commit()
+    return inserted
 
 
 class BacktestRunOut(BaseModel):
@@ -116,10 +177,24 @@ async def create_and_run(
 
     min_candles = 200 + 12 + 1  # WARMUP_BARS + holding_bars + 1
     if len(candle_rows) < min_candles:
-        raise HTTPException(
-            400,
-            f"insufficient candles: {len(candle_rows)} found, need {min_candles}+",
-        )
+        # Auto-fetch from Binance when DB is empty/insufficient
+        start_dt = body.start_date if body.start_date.tzinfo else body.start_date.replace(tzinfo=timezone.utc)
+        end_dt = body.end_date if body.end_date.tzinfo else body.end_date.replace(tzinfo=timezone.utc)
+        fetched = await _fetch_binance_candles(db, body.symbol, body.timeframe, start_dt, end_dt)
+        if fetched:
+            candle_rows = db.execute(
+                select(HistoricalCandle)
+                .where(HistoricalCandle.symbol == body.symbol.upper())
+                .where(HistoricalCandle.timeframe == body.timeframe)
+                .where(HistoricalCandle.open_time >= body.start_date)
+                .where(HistoricalCandle.open_time <= body.end_date)
+                .order_by(HistoricalCandle.open_time)
+            ).scalars().all()
+        if len(candle_rows) < min_candles:
+            raise HTTPException(
+                400,
+                f"insufficient candles: {len(candle_rows)} found (fetched {fetched} from Binance), need {min_candles}+",
+            )
 
     candles = [
         Candle(

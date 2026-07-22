@@ -21,6 +21,14 @@ from app.schemas.candle import Candle
 GATE_VERSION = "1.0"
 WARMUP_BARS = 200
 
+# Gates that make network calls — excluded from backtest to avoid
+# thousands of HTTP requests per run. Pure candle-math gates only.
+_NETWORK_GATES = frozenset({
+    "on_chain_flow", "funding_rate", "liquidity_heatmap",
+    "orderbook_micro", "fundamental_context",
+})
+BACKTEST_GATES = [g for g in ALL_GATES if g.name not in _NETWORK_GATES]
+
 
 @dataclass(frozen=True)
 class BacktestConfig:
@@ -111,7 +119,7 @@ async def evaluate_deterministic_gates(
     """Call exact live gate objects against a point-in-time candle prefix."""
     ctx = GateContext(symbol=symbol, timeframe=timeframe, candles=candles)
     evaluations: list[GateEvaluation] = []
-    for gate in ALL_GATES:
+    for gate in BACKTEST_GATES:
         try:
             evaluation = await gate.evaluate(ctx)
         except Exception as exc:  # noqa: BLE001
