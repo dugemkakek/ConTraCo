@@ -9,9 +9,12 @@ const NAV = [
   { href: "/mission-control", label: "Mission Control" },
   { href: "/charting", label: "Charting" },
   { href: "/debate", label: "Debate Chamber" },
+  { href: "/trenches", label: "Trenches" },
+  { href: "/token-safety", label: "Token Safety" },
   { href: "/strategy", label: "Strategy Lab" },
   { href: "/journal", label: "Journal" },
   { href: "/arbitrage", label: "Arbitrage" },
+  { href: "/watchlist", label: "Watchlist" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -20,6 +23,7 @@ const NAV_MORE = [
   { href: "/scan", label: "Scanner" },
   { href: "/analytics", label: "Analytics" },
   { href: "/alerts", label: "Alerts" },
+  { href: "/whales", label: "Whales" },
 ];
 
 export function TopNav() {

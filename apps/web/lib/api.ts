@@ -660,3 +660,82 @@ export async function getSentiment(symbol: string): Promise<Record<string, unkno
 }
 
 export { ApiError, request };
+
+// ── Intel API (token safety, trenches, whales, sentiment) ──
+
+export type TokenSafety = {
+  address: string;
+  chain_id: number;
+  is_honeypot: boolean | null;
+  buy_tax: number | null;
+  sell_tax: number | null;
+  is_mintable: boolean | null;
+  can_take_back_ownership: boolean | null;
+  owner_change_balance: boolean | null;
+  is_proxy: boolean | null;
+  holder_count: number | null;
+  total_supply: number | null;
+  lp_holders_count: number | null;
+  is_open_source: boolean | null;
+  is_blacklisted: boolean | null;
+  slippage_modifiable: boolean | null;
+  risk_level: string;
+  risk_flags: string[];
+  source: string;
+};
+
+export type TrenchPair = {
+  chain: string;
+  dex: string;
+  base_token?: string;
+  quote_token?: string;
+  price_usd?: number;
+  volume_24h?: number;
+  volume_6h?: number;
+  volume_1h?: number;
+  price_change_24h?: number;
+  price_change_6h?: number;
+  liquidity_usd?: number;
+  fdv?: number;
+  pair_created_at?: number;
+  url?: string;
+  token_address?: string;
+  description?: string;
+  source: string;
+};
+
+export type TrendingCoin = {
+  name: string;
+  symbol: string;
+  market_cap_rank: number | null;
+  price_btc: number | null;
+  score: number | null;
+  thumb: string;
+  source: string;
+};
+
+export type WhaleMovement = {
+  tx_hash: string;
+  btc_amount: number;
+  usd_estimate: number;
+  inputs: number;
+  outputs: number;
+  time: number | null;
+  source: string;
+};
+
+export async function getTokenSafety(address: string, chainId = 1): Promise<TokenSafety> {
+  return request(`/api/v1/intel/token-safety?address=${encodeURIComponent(address)}&chain_id=${chainId}`);
+}
+
+export async function getTrenches(limit = 20): Promise<{ pairs: TrenchPair[]; trending_coins: TrendingCoin[] }> {
+  return request(`/api/v1/intel/trenches?limit=${limit}`);
+}
+
+export async function getWhaleMovements(minBtc = 100, limit = 20): Promise<{ movements: WhaleMovement[]; count: number }> {
+  return request(`/api/v1/intel/whale-movements?min_btc=${minBtc}&limit=${limit}`);
+}
+
+export async function getIntelSentiment(): Promise<{ current: Record<string, unknown> | null; history: Record<string, unknown>[] }> {
+  return request("/api/v1/intel/sentiment");
+}

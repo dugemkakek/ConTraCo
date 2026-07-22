@@ -64,6 +64,7 @@ from app.api.scheduling import router as scheduling_router
 from app.api.news import router as news_router
 from app.api.sec import router as sec_router
 from app.api.leaderboard import router as leaderboard_router
+from app.api.intel import router as intel_router
 from app.api.dex import router as dex_router
 from app.api.dex import fundamentals_router as fundamentals_free_router
 from app.api.dex import sentiment_router as sentiment_router
@@ -165,6 +166,7 @@ app.include_router(fundamentals_free_router)
 app.include_router(sentiment_router)
 app.include_router(macro_router)
 app.include_router(leaderboard_router)
+app.include_router(intel_router)
 
 
 @app.get("/health")
