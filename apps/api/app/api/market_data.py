@@ -1,6 +1,5 @@
 """HTTP/SSE routes for market data and live candle streaming."""
 
-from __future__ import annotations
 
 import asyncio
 import json
@@ -11,7 +10,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas.candle import CandleResponse
+from app.db import redis_client
 from app.services.market_data.factory import build_provider, build_stream
+from app.services.market_data.snapshot import MarketSnapshotPipeline, SnapshotCache
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,12 @@ async def get_candles(
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
 
     try:
-        candles = await provider.get_ohlcv(normalized_symbol, timeframe, limit)
+        snapshot = await MarketSnapshotPipeline(
+            [provider], SnapshotCache(await redis_client.get_redis())
+        ).build(
+            normalized_symbol, timeframe, limit=limit, categories=("ohlcv",)
+        )
+        candles = snapshot.candles
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -67,7 +73,7 @@ async def get_candles(
         timeframe=timeframe,
         candles=candles,
         latest_candle_timestamp=latest_ts,
-        data_freshness=freshness,
+        data_freshness="STALE" if snapshot.stale_categories else freshness,
     )
 
 

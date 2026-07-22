@@ -17,10 +17,11 @@ export function SymbolSearch({ currentVenue = "gateio", onSelect }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Show all symbols when focused with empty query, filtered results when typing
   const { data, isLoading } = useQuery({
-    queryKey: ["symbol-search", q],
-    queryFn: () => searchSymbols(q),
-    enabled: q.length >= 1,
+    queryKey: ["symbol-search", q || "__all__"],
+    queryFn: () => searchSymbols(q || ""),
+    enabled: open,
     staleTime: 30_000,
   });
 
@@ -56,13 +57,13 @@ export function SymbolSearch({ currentVenue = "gateio", onSelect }: Props) {
         placeholder="Search symbol..."
         className="bg-panel border border-border rounded px-2 py-1 text-sm w-44 focus:border-info outline-none text-primary placeholder:text-muted/60"
       />
-      {open && q.length >= 1 && (
+      {open && (
         <div
           ref={dropdownRef}
           className="absolute top-full mt-1 left-0 w-64 bg-panel border border-border rounded shadow-lg z-50 max-h-72 overflow-auto"
         >
           {isLoading && (
-            <p className="text-xs text-muted p-2">Searching…</p>
+            <p className="text-xs text-muted p-2">Loading...</p>
           )}
           {data && data.length === 0 && (
             <p className="text-xs text-muted p-2">No results</p>

@@ -1,6 +1,5 @@
 """Analytics API routes — trade performance, equity, by-symbol, by-time."""
 
-from __future__ import annotations
 
 from typing import Annotated
 

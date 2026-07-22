@@ -17,7 +17,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 
@@ -55,6 +55,19 @@ from app.api.alerts import router as alerts_router
 from app.services.realtime.ws_hub import manager as ws_manager
 from app.api.analytics import router as analytics_router
 from app.api.aggregate import router as aggregate_router
+from app.api.mtf import router as mtf_router
+from app.api.arbitrage import router as arbitrage_router
+from app.api.liquidity import router as liquidity_router
+from app.api.backtest import router as backtest_router
+from app.api.risk import router as risk_router
+from app.api.scheduling import router as scheduling_router
+from app.api.news import router as news_router
+from app.api.sec import router as sec_router
+from app.api.leaderboard import router as leaderboard_router
+from app.api.dex import router as dex_router
+from app.api.dex import fundamentals_router as fundamentals_free_router
+from app.api.dex import sentiment_router as sentiment_router
+from app.api.dex import macro_router as macro_router
 from app.db import redis_client
 from app.services.llm import current_provider
 from app.services.market_data.factory import build_stream
@@ -139,6 +152,19 @@ app.include_router(orderbook_router)
 app.include_router(alerts_router)
 app.include_router(analytics_router)
 app.include_router(aggregate_router)
+app.include_router(mtf_router)
+app.include_router(arbitrage_router)
+app.include_router(liquidity_router)
+app.include_router(backtest_router)
+app.include_router(risk_router)
+app.include_router(scheduling_router)
+app.include_router(news_router)
+app.include_router(sec_router)
+app.include_router(dex_router)
+app.include_router(fundamentals_free_router)
+app.include_router(sentiment_router)
+app.include_router(macro_router)
+app.include_router(leaderboard_router)
 
 
 @app.get("/health")

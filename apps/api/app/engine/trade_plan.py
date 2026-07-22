@@ -22,10 +22,11 @@ class PlanLevels:
     stop_price: float
     take_profit: float
     risk_reward: float
-    position_size_pct: float  # % of equity to risk
-    invalidation: str
-    risk_review: str
-    synthesis: str
+    position_size_pct: float  # % of equity to risk (conservative)
+    kelly_fraction: float = 0.0  # Kelly Criterion optimal fraction (0..0.25)
+    invalidation: str = ""
+    risk_review: str = ""
+    synthesis: str = ""
 
 
 def _round(x: float, n: int) -> float:
@@ -89,6 +90,15 @@ def build_plan(
     confidence_multiplier = min(abs(decision.composite_score) / 80.0, 1.0)
     position_size_pct = _round(base_risk_pct * (0.5 + 0.5 * confidence_multiplier), 2)
 
+    # Kelly Criterion suggestion (computed but not enforced — shown in UI
+    # alongside the conservative size for the user to compare).
+    kelly_fraction = 0.0
+    win_rate = 0.55  # default if no journal data
+    rr_for_kelly = max(rr, 0.5)
+    if rr_for_kelly > 0:
+        kelly_f = (win_rate * rr_for_kelly - (1 - win_rate)) / rr_for_kelly
+        kelly_fraction = _round(max(0.0, min(kelly_f, 0.25)), 3)  # cap at 25%
+
     invalidation = (
         f"Close {'below' if direction == Direction.LONG else 'above'} "
         f"{_round(stop, 4)} on the {timeframe} timeframe"
@@ -96,7 +106,8 @@ def build_plan(
     risk_review = (
         f"Stop is {abs(entry - stop) / atr_v:.1f}×ATR "
         f"(max {spec_max_stop_atr:.1f}×). R/R is {rr:.2f} "
-        f"(min {spec_min_rr:.2f}). Position size: {position_size_pct}% of equity."
+        f"(min {spec_min_rr:.2f}). Conservative size: {position_size_pct}% of equity. "
+        f"Kelly: {kelly_fraction:.1%} (win_rate={win_rate:.0%}, capped at 25%)."
     )
     synthesis = (
         f"{direction.value} candidate on {symbol} {timeframe}. "
@@ -113,6 +124,7 @@ def build_plan(
         take_profit=_round(take, 6),
         risk_reward=_round(rr, 3),
         position_size_pct=position_size_pct,
+        kelly_fraction=kelly_fraction,
         invalidation=invalidation,
         risk_review=risk_review,
         synthesis=synthesis,

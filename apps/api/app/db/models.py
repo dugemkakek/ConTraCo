@@ -194,6 +194,7 @@ class Decision(Base):
     vetoes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     veto_sources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    confluence_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     run: Mapped["AnalysisRun"] = relationship(back_populates="decision")
 

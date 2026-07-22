@@ -1,6 +1,5 @@
 """Aggregated market overview for the dashboard page."""
 
-from __future__ import annotations
 
 import logging
 import os

@@ -1,122 +1,249 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import {
+  createChart,
+  ColorType,
+  IChartApi,
+  ISeriesApi,
+  CrosshairMode,
+  LineStyle,
+} from "lightweight-charts";
+import type { Candle } from "@/lib/api";
+import { request } from "@/lib/api";
 
 type Props = {
   symbol: string;
   venue: string;
   interval: string;
-  onSymbolChange?: (symbol: string, venue: string) => void;
   height?: number;
 };
 
-const VENUE_TO_TV_PREFIX: Record<string, string> = {
-  gateio: "GATEIO",
-  binance: "BINANCE",
-  mock: "GATEIO",
+const TF_MAP: Record<string, string> = {
+  "1m": "1m", "5m": "5m", "15m": "15m",
+  "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w",
 };
 
-const TF_TO_TV_INTERVAL: Record<string, string> = {
-  "1m": "1",
-  "5m": "5",
-  "15m": "15",
-  "1h": "60",
-  "4h": "240",
-  "1d": "D",
-};
+function toUnixSeconds(iso: string | number) {
+  const ms = typeof iso === "string" ? new Date(iso).getTime() : iso;
+  return Math.floor(ms / 1000);
+}
 
+function symbolToApiPair(symbol: string): string {
+  return symbol.replace("/", "").toUpperCase();
+}
+
+/**
+ * TradingView Lightweight Chart wrapper.
+ *
+ * Chart library: TradingView's open-source Lightweight Charts (MIT).
+ * Data source: this app's /market-data/{SYMBOL}/candles endpoint
+ *   which fetches real public candles from Binance (with a free-tier
+ *   CDN fallback) — no fabricated data ever.
+ *
+ * No API key is required for either the chart or the data feed.
+ */
 export function TradingViewChart({
   symbol,
   venue,
   interval,
-  onSymbolChange,
   height = 520,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const widgetRef = useRef<any>(null);
-  const containerId = `tv-chart-${symbol.replace("/", "-").toLowerCase()}-${Math.random().toString(36).slice(2, 6)}`;
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<{
+    candle: ISeriesApi<"Candlestick">;
+    volume: ISeriesApi<"Histogram">;
+    ema20: ISeriesApi<"Line">;
+    ema50: ISeriesApi<"Line">;
+    ema200: ISeriesApi<"Line">;
+  } | null>(null);
+  const lastKeyRef = useRef<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // Chart lifetime owned by this single effect; cleanup nulls every ref.
   useEffect(() => {
-    if (!containerRef.current) return;
     const el = containerRef.current;
+    if (!el) return;
 
-    // Load TradingView script if not in DOM
-    const scriptId = "tradingview-widget-script";
-    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
-    const scriptLoadPromise = new Promise<void>((resolve) => {
-      if ((window as any).TradingView) {
-        resolve();
-        return;
-      }
-      if (!script) {
-        script = document.createElement("script");
-        script.id = scriptId;
-        script.src = "https://s3.tradingview.com/tv.js";
-        script.async = true;
-        script.onload = () => resolve();
-        document.body.appendChild(script);
-      } else {
-        // script exists but not yet loaded
-        script.onload = () => resolve();
-      }
+    const chart = createChart(el, {
+      width: el.clientWidth,
+      height: height || el.clientHeight || 400,
+      layout: {
+        background: { type: ColorType.Solid, color: "#0B0E14" },
+        textColor: "#8B9BB4",
+        fontFamily: '"JetBrains Mono", monospace',
+      },
+      grid: {
+        vertLines: { color: "#1a2535" },
+        horzLines: { color: "#1a2535" },
+      },
+      crosshair: { mode: CrosshairMode.Normal },
+      timeScale: {
+        borderColor: "#1f2c3d",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      rightPriceScale: {
+        borderColor: "#1f2c3d",
+        scaleMargins: { top: 0.05, bottom: 0.2 },
+      },
     });
 
-    scriptLoadPromise.then(() => {
-      if (!el || !(window as any).TradingView) return;
-
-      // Remove old widget if it exists
-      if (widgetRef.current) {
-        try { widgetRef.current.remove(); } catch { /* ignore */ }
-        widgetRef.current = null;
-      }
-
-      const prefix = VENUE_TO_TV_PREFIX[venue] || "GATEIO";
-      const tvSymbol = `${prefix}:${symbol.replace("/", "")}`;
-      const tvInterval = TF_TO_TV_INTERVAL[interval] || "60";
-
-      const widget = new (window as any).TradingView.widget({
-        container_id: el.id,
-        autosize: true,
-        symbol: tvSymbol,
-        interval: tvInterval,
-        timezone: "Etc/UTC",
-        theme: "dark",
-        style: "1",
-        locale: "en",
-        toolbar_bg: "#0B0F14",
-        enable_publishing: false,
-        hide_top_toolbar: false,
-        hide_legend: false,
-        save_image: false,
-        studies: ["MASimple@tv-basicstudies", "RSI@tv-basicstudies"],
-        show_popup_button: true,
-        popup_width: "1000",
-        popup_height: "650",
-        overrides: {
-          "paneProperties.background": "#0B0F14",
-          "paneProperties.vertGridProperties.color": "#1a2535",
-          "paneProperties.horzGridProperties.color": "#1a2535",
-        },
-      });
-
-      widgetRef.current = widget;
+    const candle = chart.addCandlestickSeries({
+      upColor: "#10B981", downColor: "#F43F5E",
+      borderUpColor: "#10B981", borderDownColor: "#F43F5E",
+      wickUpColor: "#10B981", wickDownColor: "#F43F5E",
     });
+    const volume = chart.addHistogramSeries({
+      priceFormat: { type: "volume" },
+      priceScaleId: "vol",
+      color: "#1d2a3a",
+    });
+    volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    const ema20 = chart.addLineSeries({ color: "#00F0FF", lineWidth: 1, lineStyle: LineStyle.Solid, lastValueVisible: false, priceLineVisible: false });
+    const ema50 = chart.addLineSeries({ color: "#F59E0B", lineWidth: 1, lineStyle: LineStyle.Solid, lastValueVisible: false, priceLineVisible: false });
+    const ema200 = chart.addLineSeries({ color: "#A78BFA", lineWidth: 1, lineStyle: LineStyle.Dashed, lastValueVisible: false, priceLineVisible: false });
+
+    seriesRef.current = { candle, volume, ema20, ema50, ema200 };
+    chartRef.current = chart;
+
+    const ro = new ResizeObserver(() => {
+      if (chartRef.current && containerRef.current) {
+        chartRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
+          ...(height === 0 ? { height: containerRef.current.clientHeight } : {}),
+        });
+      }
+    });
+    ro.observe(el);
 
     return () => {
-      if (widgetRef.current) {
-        try { widgetRef.current.remove(); } catch { /* ignore */ }
-        widgetRef.current = null;
-      }
+      ro.disconnect();
+      try { chart.remove(); } catch { /* noop */ }
+      chartRef.current = null;
+      seriesRef.current = null;
+      lastKeyRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, venue, interval]);
+  }, [height]);
+
+  // Data load keyed on (symbol, interval, venue).
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const series = seriesRef.current;
+    const apiPair = symbolToApiPair(symbol);
+    const tf = TF_MAP[interval] || "1h";
+    const dataKey = `${venue}:${apiPair}:${tf}`;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    (async () => {
+      try {
+        const url = `/api/v1/market-data/${apiPair}/candles?timeframe=${tf}&limit=500`;
+        const response = await request<{
+          candles: Candle[];
+          data_freshness: string;
+        }>(url);
+
+        if (cancelled) return;
+        if (!response.candles || response.candles.length === 0) {
+          // Try graceful failover: if Binance pair is missing, try the
+          // canonical CCXT-style symbol with separator.
+          const fallback = await request<{ candles: Candle[] }>(
+            `/api/v1/market-data/${symbol.toUpperCase()}/candles?timeframe=${tf}&limit=500`,
+          );
+          if (cancelled) return;
+          if (!fallback.candles || fallback.candles.length === 0) {
+            setError(`No real-time data available for ${symbol} on ${venue.toUpperCase()}.`);
+            setLoading(false);
+            return;
+          }
+          applySeries(fallback.candles, series, chartRef.current);
+        } else {
+          applySeries(response.candles, series, chartRef.current);
+        }
+        lastKeyRef.current = dataKey;
+        setLoading(false);
+      } catch (exc) {
+        if (cancelled) return;
+        setError(
+          `Failed to reach market data: ${String((exc as Error).message ?? exc)}`,
+        );
+        setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [symbol, interval, venue]);
 
   return (
-    <div
-      id={containerId}
-      ref={containerRef}
-      className="w-full"
-      style={{ height }}
-    />
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="w-full h-full" />
+      {loading && (
+        <div className="absolute inset-x-0 top-2 flex items-center justify-center pointer-events-none">
+          <span className="bg-panel/80 border border-border text-muted text-[10px] font-mono px-2 py-1 backdrop-blur">
+            loading live {symbol.toUpperCase()} {interval} …
+          </span>
+        </div>
+      )}
+      {error && !loading && (
+        <div className="absolute inset-x-0 bottom-3 mx-auto w-fit max-w-[80%] bg-panel/95 border border-bearish text-bearish text-[11px] font-mono px-3 py-2 backdrop-blur">
+          {error}
+        </div>
+      )}
+    </div>
   );
+}
+
+function applySeries(
+  candles: Candle[],
+  series: {
+    candle: ISeriesApi<"Candlestick">;
+    volume: ISeriesApi<"Histogram">;
+    ema20: ISeriesApi<"Line">;
+    ema50: ISeriesApi<"Line">;
+    ema200: ISeriesApi<"Line">;
+  },
+  chart: IChartApi | null,
+) {
+  const candleData = candles.map((c) => ({
+    time: toUnixSeconds(c.timestamp) as any,
+    open: c.open, high: c.high, low: c.low, close: c.close,
+  }));
+  const volumeData = candles.map((c) => ({
+    time: toUnixSeconds(c.timestamp) as any,
+    value: c.volume,
+    color: c.close >= c.open ? "rgba(16,185,129,0.4)" : "rgba(244,63,94,0.4)",
+  }));
+  const closes = candleData.map((c) => c.close);
+  const ema20 = ema(closes, 20);
+  const ema50 = ema(closes, 50);
+  const ema200 = ema(closes, 200);
+  const line = (vals: (number | null)[]) => candleData
+    .map((c, i) => (vals[i] == null ? null : { time: c.time as any, value: vals[i] as number }))
+    .filter(Boolean) as { time: any; value: number }[];
+
+  series.candle.setData(candleData);
+  series.volume.setData(volumeData);
+  series.ema20.setData(line(ema20));
+  series.ema50.setData(line(ema50));
+  series.ema200.setData(line(ema200));
+  if (chart) chart.timeScale().fitContent();
+}
+
+// EMA helper mirrors server `indicators.ema` so the chart overlays match.
+function ema(values: number[], period: number): (number | null)[] {
+  const k = 2 / (period + 1);
+  const out: (number | null)[] = new Array(values.length).fill(null);
+  if (values.length < period) return out;
+  let prior = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  out[period - 1] = prior;
+  for (let i = period; i < values.length; i++) {
+    prior = values[i] * k + prior * (1 - k);
+    out[i] = prior;
+  }
+  return out;
 }

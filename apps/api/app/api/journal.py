@@ -4,7 +4,6 @@ Manual entries (trades the user took outside the system) and
 entries auto-created from an analysis run / order.
 """
 
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Annotated

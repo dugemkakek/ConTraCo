@@ -15,13 +15,15 @@ export function VenueSelector({ value, onChange }: Props) {
     staleTime: 300_000,
   });
 
+  // Filter to live-data exchanges only — never show mock.
+  const venues = (data ?? []).filter((v) => v.id !== "mock");
   return (
     <select
-      value={value}
+      value={venues.some((v) => v.id === value) ? value : venues[0]?.id ?? "binance"}
       onChange={(e) => onChange(e.target.value)}
       className="bg-border/40 border border-border rounded px-2 py-1 text-xs outline-none focus:border-info text-primary"
     >
-      {data?.map((v) => (
+      {venues.map((v) => (
         <option key={v.id} value={v.id}>
           {v.label}
         </option>

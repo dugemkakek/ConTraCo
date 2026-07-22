@@ -1,6 +1,5 @@
 """Aggregate market overview — top-25 pairs by volume across all venues."""
 
-from __future__ import annotations
 
 import asyncio
 import logging

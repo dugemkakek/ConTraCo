@@ -21,7 +21,7 @@ export default function TerminalPage() {
   const searchParams = useSearchParams();
   const symbol = (params.symbol ?? "BTC-USDT").toString();
   const displaySymbol = symbol.replace("-", "/");
-  const venueFromUrl = searchParams.get("venue") || "gateio";
+  const venueFromUrl = searchParams.get("venue") || "binance";
 
   const [timeframe, setTimeframe] = useState("1h");
   const [venue, setVenue] = useState(venueFromUrl);

@@ -52,6 +52,7 @@ class _InProcClient:
 
     def __init__(self) -> None:
         self._channels: dict[str, _InProcChannel] = {}
+        self._values: dict[str, tuple[str, float | None]] = {}
         self._lock = asyncio.Lock()
 
     async def _channel(self, name: str) -> _InProcChannel:
@@ -64,6 +65,23 @@ class _InProcClient:
 
     async def publish(self, channel: str, message: str) -> int:
         return await (await self._channel(channel)).publish(message)
+
+    async def get(self, key: str) -> str | None:
+        async with self._lock:
+            item = self._values.get(key)
+            if item is None:
+                return None
+            value, expires_at = item
+            if expires_at is not None and expires_at <= asyncio.get_running_loop().time():
+                self._values.pop(key, None)
+                return None
+            return value
+
+    async def setex(self, key: str, seconds: int, value: str) -> bool:
+        expires_at = asyncio.get_running_loop().time() + seconds
+        async with self._lock:
+            self._values[key] = (value, expires_at)
+        return True
 
     def pubsub(self) -> "_InProcPubSub":
         return _InProcPubSub(self)

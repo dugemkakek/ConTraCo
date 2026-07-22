@@ -1,15 +1,18 @@
-"""Order execution interface.
+"""Order execution interface — RECOMMEND-ONLY.
 
-Live trading on Gate.io is **opt-in** and **gated by an explicit
-environment variable** (``LIVE_TRADING=1``). The default is a
-paper/dry-run execution that records the order intent and returns
-a fake fill, so the rest of the system can be exercised safely.
+This module provides PAPER execution for testing and an opt-in live
+Gate.io execution path gated by explicit credentials and the
+``LIVE_TRADING=1`` environment variable.
 
-Every order goes through:
-  1. Safety check — refuses to submit if max notional / max position
-     is exceeded.
-  2. Optional journal auto-create.
-  3. Execution (paper or live) and persistence.
+There is no DEX execution path in this project. DEX integration
+(`app/services/market_data/dex.py`) provides read-only pool data,
+quotes, and tranche discovery — no transaction construction, no
+signing, no wallet interaction. That boundary is enforced by
+``scripts/check_boundaries.py``.
+
+When paper mode is on, fills are clearly marked
+``exchange_order_id="paper-{ts}"`` so downstream consumers can
+distinguish from real exchange fills.
 """
 
 from __future__ import annotations

@@ -17,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
 os.environ.setdefault("MARKET_DATA_PROVIDER", "mock")
+os.environ.setdefault("CONTRA_CO_ALLOW_MOCK", "1")
 os.environ.setdefault("RUN_MIGRATIONS_ON_STARTUP", "0")
 
 # Ensure stub LLM for all tests (no real API calls)

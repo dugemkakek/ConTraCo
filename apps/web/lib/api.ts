@@ -51,6 +51,44 @@ export type DecisionOut = {
   vetoes: string[];
   veto_sources: string[];
   reason: string;
+  confluence_result?: ConfluenceResult | null;
+};
+
+export type DebateMember = {
+  name: string;
+  confidence: number;
+  weight: number;
+  reasoning: string;
+  low_conviction: boolean;
+  source: "gate" | "council";
+};
+
+export type DebateCamp = {
+  members: DebateMember[];
+  summary: string;
+  total_weight: number;
+};
+
+export type ConfluenceResult = {
+  score: number;
+  raw_score: number;
+  mtf_bonus: number;
+  band: "STRONG" | "MODERATE" | "WEAK" | "DIVERGENT";
+  direction: string;
+  is_actionable: boolean;
+  regime: string | null;
+  scenario: { primary: string; alternative: string; invalidation: string };
+  kelly: { win_probability: number; win_loss_ratio: number; full_kelly: number; half_kelly: number; quarter_kelly: number };
+  gate_contributions: Record<string, number>;
+  adjusted_weights: Record<string, number>;
+  debate?: {
+    bull: DebateCamp;
+    bear: DebateCamp;
+    neutral: DebateCamp;
+    scenario: { primary: string; alternative: string; invalidation: string };
+    low_conviction_flags: string[];
+    debate_summary: string;
+  };
 };
 
 export type TradePlanOut = {
@@ -447,6 +485,178 @@ export type AnalysisRunSummary = {
 
 export function analysisHistory(symbol: string, limit = 10): Promise<AnalysisRunSummary[]> {
   return request<AnalysisRunSummary[]>(`/api/v1/analysis/runs?symbol=${encodeURIComponent(symbol)}&limit=${limit}`);
+}
+
+// ── Backtest ──
+export type BacktestRunOut = {
+  id: number;
+  symbol: string;
+  timeframe: string;
+  strategy_id: number | null;
+  start_date: string;
+  end_date: string;
+  initial_balance: number;
+  final_balance: number | null;
+  status: string;
+  metrics: Record<string, number | string> | null;
+  equity_curve: number[] | null;
+  created_at: string;
+};
+
+export async function runBacktest(args: {
+  symbol: string;
+  timeframe?: string;
+  strategy_id?: number | null;
+  start_date: string;
+  end_date: string;
+  initial_balance?: number;
+  commission_pct?: number;
+  slippage_pct?: number;
+  stop_loss_pct?: number;
+  take_profit_pct?: number;
+  lookback?: number;
+}): Promise<BacktestRunOut> {
+  return request("/api/v1/backtest/run", { method: "POST", body: args });
+}
+
+export async function listBacktests(symbol?: string, limit = 50): Promise<BacktestRunOut[]> {
+  const qs = new URLSearchParams();
+  if (symbol) qs.set("symbol", symbol);
+  qs.set("limit", String(limit));
+  return request(`/api/v1/backtest?${qs}`);
+}
+
+export async function deleteBacktest(runId: number): Promise<void> {
+  await request(`/api/v1/backtest/${runId}`, { method: "DELETE" }, false);
+}
+
+// ── Liquidity ──
+export type LiquidityLevel = {
+  price: number;
+  intensity: number;
+  type: "long_liquidation" | "short_liquidation";
+  volume_usd: number;
+};
+
+export type LiquidityHeatmap = {
+  symbol: string;
+  levels: LiquidityLevel[];
+  source: string;
+  updated_at: string | null;
+};
+
+export async function getLiquidityHeatmap(symbol: string): Promise<LiquidityHeatmap> {
+  return request(`/api/v1/liquidity/heatmap?symbol=${encodeURIComponent(symbol)}`);
+}
+
+export type FundingOI = {
+  symbol: string;
+  funding: { current: number; predicted: number; annualized: number; trend: string };
+  open_interest: { current: number; change_24h: number; change_24h_pct: number; long_short_ratio: number };
+  source: string;
+};
+
+export async function getFundingOI(symbol: string): Promise<FundingOI> {
+  return request(`/api/v1/liquidity/funding-oi?symbol=${encodeURIComponent(symbol)}`);
+}
+
+// ── Arbitrage ──
+export type YieldOpportunity = {
+  symbol: string;
+  long_venue: string;
+  short_venue: string;
+  spot_price: number;
+  perp_price: number;
+  funding_rate: number;
+  net_apy: number;
+  confidence: number;
+};
+
+export type CexDexSpread = {
+  symbol: string;
+  cex_venue: string;
+  cex_price: number;
+  dex_venue: string;
+  dex_price: number;
+  spread_pct: number;
+  net_profit_after_gas: number;
+  executable: boolean;
+};
+
+export async function getYieldOpportunities(): Promise<{ opportunities: YieldOpportunity[]; count: number }> {
+  return request("/api/v1/arbitrage/yield");
+}
+
+export async function getCexDexSpreads(): Promise<{ spreads: CexDexSpread[]; count: number }> {
+  return request("/api/v1/arbitrage/spreads");
+}
+
+// ----- DEX, fundamentals, macro, sentiment -----
+
+export type DexPool = {
+  address: string;
+  base: string;
+  quote: string;
+  price: number;
+  volume_24h_usd: number;
+  liquidity_usd: number;
+  fee_tier: number;
+};
+
+export type DexNetwork = {
+  network: string;
+  pool_count: number;
+  total_liquidity_usd: number;
+  total_volume_24h_usd: number;
+  top_pools?: DexPool[];
+  tranches?: DexPool[];
+};
+
+export async function listDexNetworks(): Promise<{ networks: string[] }> {
+  return request("/api/v1/dex/networks");
+}
+
+export async function listTopDexPools(network: string, limit = 20): Promise<{ pools: DexPool[] }> {
+  return request(`/api/v1/dex/pools/top?network=${network}&limit=${limit}`);
+}
+
+export async function getDexPool(poolAddress: string, network = "ethereum"): Promise<Record<string, unknown>> {
+  return request(`/api/v1/dex/pools/${poolAddress}?network=${network}`);
+}
+
+export async function getDexRange(network = "ethereum"): Promise<DexNetwork> {
+  return request(`/api/v1/dex/pools/range?network=${network}`);
+}
+
+export async function getDexOverview(): Promise<{ networks: DexNetwork[] }> {
+  return request("/api/v1/dex/overview");
+}
+
+export async function discoverRobinhoodTranches(): Promise<DexNetwork> {
+  return request("/api/v1/dex/tranches/robinhood-base");
+}
+
+export async function getDexQuote(
+  tokenIn: string, tokenOut: string, amountIn: number, network = "ethereum",
+): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ token_in: tokenIn, token_out: tokenOut, amount_in: String(amountIn), network });
+  return request(`/api/v1/dex/quote?${params.toString()}`);
+}
+
+export async function getFundamentalsSnapshot(symbol: string): Promise<Record<string, unknown>> {
+  return request(`/api/v1/fundamentals/free/snapshot?symbol=${symbol}`);
+}
+
+export async function getFearAndGreed(): Promise<Record<string, unknown>> {
+  return request("/api/v1/fundamentals/free/fear-and-greed");
+}
+
+export async function getMacroSnapshot(): Promise<Record<string, unknown>> {
+  return request("/api/v1/macro/snapshot");
+}
+
+export async function getSentiment(symbol: string): Promise<Record<string, unknown>> {
+  return request(`/api/v1/sentiment/${encodeURIComponent(symbol)}`);
 }
 
 export { ApiError, request };

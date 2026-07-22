@@ -79,6 +79,11 @@ from app.engine.gates.risk_tradeability import RiskTradeabilityGate  # noqa: E40
 from app.engine.gates.market_structure_smc import SMCStructureGate  # noqa: E402
 from app.engine.gates.ichimoku_cloud import IchimokuCloudGate  # noqa: E402
 from app.engine.gates.fibonacci_levels import FibonacciLevelsGate  # noqa: E402
+from app.engine.gates.on_chain_flow import OnChainFlowGate  # noqa: E402
+from app.engine.gates.funding_rate import FundingRateGate  # noqa: E402
+from app.engine.gates.orderbook_micro import OrderbookMicroGate  # noqa: E402
+from app.engine.gates.liquidity_heatmap import LiquidityHeatmapGate  # noqa: E402
+from app.engine.gates.pattern_recognition import PatternRecognitionGate  # noqa: E402
 
 ALL_GATES: list[BaseGate] = [
     MarketRegimeGate(),
@@ -90,6 +95,11 @@ ALL_GATES: list[BaseGate] = [
     SMCStructureGate(),
     IchimokuCloudGate(),
     FibonacciLevelsGate(),
+    OnChainFlowGate(),
+    FundingRateGate(),
+    OrderbookMicroGate(),
+    LiquidityHeatmapGate(),
+    PatternRecognitionGate(),
 ]
 
 GATE_NAMES = [g.name for g in ALL_GATES]

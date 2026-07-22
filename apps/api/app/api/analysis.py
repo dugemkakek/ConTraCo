@@ -1,6 +1,5 @@
 """Analysis run API."""
 
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any
@@ -37,6 +36,7 @@ class DecisionOut(BaseModel):
     vetoes: list[str]
     veto_sources: list[str]
     reason: str
+    confluence_result: dict[str, Any] | None = None
 
 
 class GateOut(BaseModel):
@@ -112,6 +112,7 @@ def _serialize(run: AnalysisRun) -> RunOut:
             vetoes=d.vetoes,
             veto_sources=d.veto_sources,
             reason=d.reason,
+            confluence_result=d.confluence_result,
         ) if d else None,
         gates=[
             GateOut(

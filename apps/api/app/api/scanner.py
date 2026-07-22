@@ -5,7 +5,6 @@ the latest state per symbol, and emits Redis pub/sub messages for
 notable results.
 """
 
-from __future__ import annotations
 
 import asyncio
 import json

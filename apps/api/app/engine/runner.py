@@ -42,39 +42,42 @@ from app.db.models import (
     TradePlan,
     User,
 )
+from app.engine.confluence import (
+    GateVerdict,
+    MarketRegime,
+    detect_regime,
+    run_confluence,
+)
 from app.engine.council import CouncilContext, ModelOpinionData, run_council
+from app.engine.debate import run_debate
 from app.engine.decision import decide
-from app.engine.gates import ALL_GATES, GateContext
+from app.engine.gates import ALL_GATES, GateContext, GateEvaluation
 from app.engine.strategy import StrategyConfigSpec, get_active_spec
 from app.engine.trade_plan import build_plan
+from app.db import redis_client
 from app.services.market_data.factory import build_provider
-from app.services.market_data.gateio_rest import GateioRestProvider
+from app.services.market_data.registry import all_providers
+from app.services.market_data.snapshot import MarketSnapshot, MarketSnapshotPipeline, SnapshotCache
 from app.services.fundamentals.context_builder import build_context
 
 logger = logging.getLogger(__name__)
 
 
-async def _fetch_market_data(symbol: str, timeframe: str, limit: int):
-    """Fetch candles + (optionally) order book from the provider."""
-    provider = build_provider()
-    candles = await provider.get_ohlcv(symbol, timeframe, limit=limit)
-    order_book: dict | None = None
-    if isinstance(provider, GateioRestProvider):
-        try:
-            ob = await provider.list_spot_pairs()  # cheap; reuse client
-            # Gate.io's /spot/order_book requires a known pair
-            from app.services.market_data.gateio_rest import to_gateio_pair
-            await provider._get_client()  # ensure client open
-            client = await provider._get_client()
-            r = await client.get(
-                "/spot/order_book",
-                params={"currency_pair": to_gateio_pair(symbol), "limit": "20"},
-            )
-            if r.status_code == 200:
-                order_book = r.json()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("order book fetch failed for %s: %s", symbol, exc)
-    return candles, order_book
+async def _fetch_market_data(symbol: str, timeframe: str, limit: int) -> MarketSnapshot:
+    """Build one canonical, cached snapshot with provider failover."""
+    primary = build_provider()
+    providers = [primary]
+    if primary.name != "mock":
+        providers.extend(
+            p for p in all_providers()
+            if p.name not in {primary.name, "mock"}
+            and p.is_symbol_supported(symbol)
+            and p.is_timeframe_supported(timeframe)
+        )
+    cache = SnapshotCache(await redis_client.get_redis())
+    return await MarketSnapshotPipeline(providers, cache).build(
+        symbol, timeframe, limit=limit
+    )
 
 
 async def run_analysis(
@@ -109,7 +112,8 @@ async def run_analysis(
 
     try:
         # 1) data
-        candles, order_book = await _fetch_market_data(symbol, timeframe, candle_limit)
+        snapshot = await _fetch_market_data(symbol, timeframe, candle_limit)
+        candles, order_book = snapshot.candles, snapshot.order_book
         if not candles:
             run.status = RunStatus.COMPLETED
             run.final_state = FinalState.DATA_INVALID
@@ -119,10 +123,10 @@ async def run_analysis(
             return run
 
         # 2) gates
-        symbol_meta: dict[str, Any] = {
-            "is_active": True,
-            "quote_volume_24h": order_book.get("quote_volume_24h") if order_book else None,
-        }
+        symbol_meta: dict[str, Any] = snapshot.symbol_meta
+        symbol_meta["quote_volume_24h"] = (
+            order_book.get("quote_volume_24h") if order_book else None
+        )
         gctx = GateContext(
             symbol=symbol, timeframe=timeframe, candles=candles,
             order_book=order_book, symbol_meta=symbol_meta,
@@ -162,6 +166,50 @@ async def run_analysis(
         # 3) fundamental context for the LLM council
         fc = await build_context(db, symbol)
 
+        # 3.5) Confluence engine (spec 04)
+        # Bridge GateEvaluation → GateVerdict, detect regime, compute
+        # confluence score + scenario framing + Kelly.
+        regime = None
+        for ge in gate_evals:
+            if ge.name == "market_regime" and ge.status != GateStatus.UNAVAILABLE:
+                adx_val = ge.evidence.get("adx", 0)
+                # Estimate ATR% from candles
+                if len(candles) >= 14:
+                    atr_pct = sum(
+                        c.high - c.low for c in candles[-14:]
+                    ) / 14 / max(candles[-1].close, 1e-9) * 100
+                else:
+                    atr_pct = 0.0
+                regime = detect_regime(adx_val, atr_pct)
+                break
+
+        verdicts: list[GateVerdict] = []
+        for ge in gate_evals:
+            if ge.status == GateStatus.UNAVAILABLE:
+                continue
+            w = spec.gates.model_dump().get(ge.name, 0.0)
+            if w == 0.0:
+                continue
+            # Map gate score to direction: positive → +1, negative → -1
+            direction = 1 if ge.score > 5 else -1 if ge.score < -5 else 0
+            verdicts.append(GateVerdict(
+                gate_name=ge.name,
+                direction=direction,
+                confidence=ge.confidence,
+                weight=w,
+                reasoning=ge.reason,
+                evidence=ge.evidence,
+            ))
+
+        conf_result = run_confluence(
+            verdicts,
+            regime=regime,
+            htf_direction=0,  # ponytail: wire MTF when multi-TF data pipeline exists
+            mtf_direction=0,
+            ltf_direction=0,
+        )
+        conf_dict = conf_result.to_dict()
+
         # 4) council
         council_ctx = CouncilContext(
             symbol=symbol, timeframe=timeframe, candles=candles,
@@ -190,12 +238,21 @@ async def run_analysis(
                 )
             )
 
-        # 4) decision
+        # 4.5) CRO debate protocol (spec 03)
+        council_op_dicts = [
+            {"role": o.role, "direction": o.direction.value,
+             "confidence": o.confidence, "reason": o.reason}
+            for o in opinions
+        ]
+        debate = run_debate(verdicts, conf_result.scenario, council_op_dicts)
+        conf_dict["debate"] = debate.to_dict()
+
+        # 5) decision
         result = decide(
             gates=gate_evals,
             opinions=opinions,
             spec=spec,
-            total_configured_gates=6,
+            total_configured_gates=len(ALL_GATES),
             total_directional_roles=4,
         )
         run.final_state = result.final_state
@@ -214,6 +271,7 @@ async def run_analysis(
                 vetoes=result.vetoes,
                 veto_sources=result.veto_sources,
                 reason=result.reason,
+                confluence_result=conf_dict,
             )
         )
 
@@ -245,7 +303,7 @@ async def run_analysis(
             db.add(
                 Alert(
                     user_id=user.id,
-                    run_id=run.id,
+                    symbol=symbol,
                     severity=AlertSeverity.INFO,
                     message=f"{result.final_state.value} on {symbol} {timeframe} "
                             f"(composite {result.composite_score:+.1f})",
@@ -255,7 +313,7 @@ async def run_analysis(
             db.add(
                 Alert(
                     user_id=user.id,
-                    run_id=run.id,
+                    symbol=symbol,
                     severity=AlertSeverity.WARNING,
                     message=f"AVOID on {symbol} {timeframe}: {'; '.join(result.vetoes[:3])}",
                 )

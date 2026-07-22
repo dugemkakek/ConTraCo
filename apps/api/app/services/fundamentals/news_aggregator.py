@@ -1,132 +1,183 @@
-"""News aggregation from RSS, NewsAPI, and CryptoPanic."""
+"""News aggregator — collect, tag by ticker, and score sentiment.
+
+Combines RSS feeds + Google News search into a unified pipeline
+that produces per-symbol fundamental context for the gate engine.
+Also provides `ingest_news(db)` to persist items into the NewsItem table.
+"""
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import logging
+import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import NewsItem
+from app.services.fundamentals.rss_poller import NewsItem as RssNewsItem, fetch_all_feeds, google_news_rss
+from app.services.fundamentals.sentiment import aggregate_sentiment, analyze_sentiment
 
 logger = logging.getLogger(__name__)
 
-# RSS feeds for crypto news
-RSS_FEEDS = [
-    "https://coindesk.com/arc/outboundfeeds/rss/",
-    "https://cointelegraph.com/rss",
-    "https://cryptoslate.com/feed/",
-]
-
-# Symbol keyword mapping for tagging
-SYMBOL_KEYWORDS: dict[str, list[str]] = {
-    "BTC": ["bitcoin", "btc", "#btc"],
-    "ETH": ["ethereum", "eth", "#eth"],
-    "SOL": ["solana", "sol", "#sol"],
-    "BNB": ["binance coin", "bnb", "#bnb"],
-    "XRP": ["ripple", "xrp", "#xrp"],
-    "ADA": ["cardano", "ada", "#ada"],
-    "AVAX": ["avalanche", "avax", "#avax"],
+# Ticker/symbol patterns for matching news to symbols
+TICKER_PATTERNS: dict[str, list[str]] = {
+    "BTC": ["bitcoin", "btc", "satoshi", "lightning network"],
+    "ETH": ["ethereum", "eth", "vitalik", "erc-20", "eip"],
+    "SOL": ["solana", "sol", "phantom wallet"],
+    "BNB": ["bnb", "binance coin", "binance chain"],
+    "XRP": ["xrp", "ripple", "sec lawsuit"],
+    "ADA": ["cardano", "ada", "charles hoskinson"],
+    "AVAX": ["avalanche", "avax"],
+    "DOGE": ["dogecoin", "doge", "elon"],
+    "DOT": ["polkadot", "dot", "gavin wood"],
+    "LINK": ["chainlink", "link", "oracle"],
+    "MATIC": ["polygon", "matic"],
+    "ARB": ["arbitrum", "arb"],
+    "OP": ["optimism", "op stack"],
+    "ATOM": ["cosmos", "atom", "ibc"],
+    "UNI": ["uniswap", "uni"],
+    "AAVE": ["aave"],
+    "SPY": ["s&p 500", "spy", "stock market", "wall street"],
+    "QQQ": ["nasdaq", "qqq", "tech stocks"],
 }
 
+# Macro keywords that affect all markets
+MACRO_KEYWORDS = [
+    "federal reserve", "fed rate", "interest rate", "inflation", "cpi",
+    "gdp", "unemployment", "treasury", "yield curve", "recession",
+    "tariff", "trade war", "geopolitical", "sanctions",
+]
 
-def _tag_symbols(title: str, summary: str | None) -> list[str]:
-    """Tag article with relevant symbols using keyword matching."""
-    text = (title + " " + (summary or "")).lower()
+
+def match_tickers(text: str) -> list[str]:
+    """Find which tickers/symbols a text mentions."""
+    text_lower = text.lower()
     matched = []
-    for symbol, keywords in SYMBOL_KEYWORDS.items():
-        if any(kw in text for kw in keywords):
-            matched.append(f"{symbol}/USDT")
+    for ticker, patterns in TICKER_PATTERNS.items():
+        if any(p in text_lower for p in patterns):
+            matched.append(ticker)
     return matched
 
 
-def _dedup_key(item: dict[str, Any]) -> str:
-    """Generate a unique hash for deduplication."""
-    raw = item.get("title", "") + item.get("link", "")
-    return hashlib.md5(raw.encode()).hexdigest()
+def is_macro_relevant(text: str) -> bool:
+    """Check if text contains macro-economic keywords."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in MACRO_KEYWORDS)
 
 
-async def fetch_news() -> list[dict[str, Any]]:
-    """Fetch news from all sources. Returns list of normalized articles."""
-    articles: list[dict[str, Any]] = []
+async def get_news_context(
+    symbol: str,
+    max_age_hours: float = 12.0,
+    max_items: int = 30,
+) -> dict[str, Any]:
+    """Build fundamental news context for a symbol.
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for feed_url in RSS_FEEDS:
-            try:
-                resp = await client.get(feed_url, headers={"User-Agent": "confluence-trading-consultant/1.0"})
-                if resp.status_code != 200:
-                    logger.warning("RSS %s returned %d", feed_url, resp.status_code)
-                    continue
-                # Basic XML parsing — extract title, link, pubDate
-                raw = resp.text
-                # Simple extraction (full XML parser would be feedparser; this is minimal)
-                import re
-                titles = re.findall(r"<title[^>]*>(.*?)</title>", raw, re.DOTALL)
-                links = re.findall(r"<link[^>]*>(.*?)</link>", raw, re.DOTALL)
-                pub_dates = re.findall(r"<pubDate[^>]*>(.*?)</pubDate>", raw, re.DOTALL)
+    Returns:
+      - sentiment: aggregated VADER sentiment for matched articles
+      - macro_sentiment: sentiment for macro-relevant articles
+      - articles: list of matched article summaries
+      - total_scanned: total articles scanned
+      - source: data source identifier
+    """
+    base = symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
 
-                for i, title in enumerate(titles):
-                    if not title or title.startswith("<!") or title.startswith("[CDATA["):
-                        continue
-                    articles.append({
-                        "source": feed_url.split("/")[2],
-                        "title": title.strip(),
-                        "link": links[i] if i < len(links) else "",
-                        "published_at": pub_dates[i] if i < len(pub_dates) else None,
-                    })
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("RSS fetch failed for %s: %s", feed_url, exc)
+    # 1. Fetch all niche feeds
+    all_news = await fetch_all_feeds(max_age_hours=max_age_hours)
 
-    return articles
+    # 2. Also search Google News for the specific ticker
+    try:
+        ticker_news = await google_news_rss(base, max_results=10)
+        all_news.extend(ticker_news)
+    except Exception:
+        pass
+
+    # 3. Filter to articles mentioning this ticker or macro
+    matched: list[RssNewsItem] = []
+    macro_articles: list[RssNewsItem] = []
+
+    for item in all_news:
+        text = f"{item.title} {item.summary}"
+        tickers = match_tickers(text)
+        if base in tickers:
+            matched.append(item)
+        if is_macro_relevant(text):
+            macro_articles.append(item)
+
+    # Deduplicate by title similarity
+    seen_titles: set[str] = set()
+    unique_matched: list[RssNewsItem] = []
+    for item in matched:
+        key = item.title.lower().strip()[:60]
+        if key not in seen_titles:
+            seen_titles.add(key)
+            unique_matched.append(item)
+    unique_matched = unique_matched[:max_items]
+
+    # 4. Sentiment analysis
+    matched_texts = [f"{a.title}. {a.summary}" for a in unique_matched]
+    macro_texts = [f"{a.title}. {a.summary}" for a in macro_articles[:20]]
+
+    sentiment = aggregate_sentiment(matched_texts)
+    macro_sentiment = aggregate_sentiment(macro_texts)
+
+    return {
+        "symbol": symbol,
+        "sentiment": sentiment,
+        "macro_sentiment": macro_sentiment,
+        "articles": [
+            {
+                "title": a.title,
+                "source": a.source,
+                "published": a.published,
+                "link": a.link,
+                "tags": a.tags,
+            }
+            for a in unique_matched[:10]
+        ],
+        "total_scanned": len(all_news),
+        "matched_count": len(unique_matched),
+        "macro_count": len(macro_articles),
+        "source": "rss+google_news+vader",
+    }
 
 
 async def ingest_news(db: Session) -> int:
-    """Fetch news, deduplicate, tag symbols, store in DB. Returns new count."""
-    articles = await fetch_news()
-    seen = set()
+    """Fetch RSS feeds, match tickers, score sentiment, persist to DB.
+
+    Returns the number of newly inserted rows.
+    """
+    from app.db.models import NewsItem as NewsItemRow
+
+    all_news = await fetch_all_feeds(max_age_hours=24.0)
     new_count = 0
 
-    for article in articles:
-        key = _dedup_key(article)
-        if key in seen:
+    for item in all_news:
+        text = f"{item.title} {item.summary}"
+        tickers = match_tickers(text)
+        if not tickers and not is_macro_relevant(text):
             continue
-        seen.add(key)
 
-        # Check if already in DB
-        url = article.get("link", "")
-        existing = db.execute(select(NewsItem).where(NewsItem.url == url)).scalar_one_or_none()
+        # Skip duplicates (unique URL constraint)
+        existing = db.query(NewsItemRow).filter(NewsItemRow.url == item.link).first()
         if existing:
             continue
 
-        title = article.get("title", "")[:500]
-        symbols = _tag_symbols(title, None)
-        published = None
-        if article.get("published_at"):
-            try:
-                from email.utils import parsedate_to_datetime
-                published = parsedate_to_datetime(article["published_at"])
-            except Exception:  # noqa: BLE001
-                pass
+        scores = analyze_sentiment(text)
+        pub_dt = datetime.fromtimestamp(item.published, tz=timezone.utc) if item.published else None
 
-        item = NewsItem(
-            source=article.get("source", "unknown")[:50],
-            title=title,
-            url=url[:1000],
-            published_at=published,
-            symbol_relevance=symbols,
-            sentiment_score=None,
-            summary=None,
+        row = NewsItemRow(
+            source=item.source,
+            title=item.title[:500],
+            url=item.link[:1000],
+            published_at=pub_dt,
+            symbol_relevance=tickers,
+            sentiment_score=scores.get("compound"),
+            summary=item.summary[:2000] if item.summary else None,
         )
-        db.add(item)
+        db.add(row)
         new_count += 1
 
     if new_count:
         db.commit()
-        logger.info("Ingested %d new news items", new_count)
-
     return new_count

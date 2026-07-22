@@ -17,12 +17,20 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class GateWeight(BaseModel):
-    market_regime: float
-    classical_ta: float
-    market_structure: float
-    volume_momentum: float
-    fundamental_context: float
-    risk_tradeability: float
+    market_regime: float = 0.10
+    classical_ta: float = 0.12
+    market_structure: float = 0.10
+    volume_momentum: float = 0.08
+    market_structure_smc: float = 0.07
+    ichimoku_cloud: float = 0.05
+    fibonacci_levels: float = 0.04
+    on_chain_flow: float = 0.06
+    funding_rate: float = 0.07
+    orderbook_micro: float = 0.06
+    liquidity_heatmap: float = 0.06
+    pattern_recognition: float = 0.05
+    fundamental_context: float = 0.06
+    risk_tradeability: float = 0.08
 
     @model_validator(mode="after")
     def _sums_to_one(self) -> "GateWeight":
@@ -96,12 +104,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "composite_gate_weight": 0.55,
     "composite_model_weight": 0.45,
     "gates": {
-        "market_regime": 0.18,
-        "classical_ta": 0.20,
-        "market_structure": 0.20,
-        "volume_momentum": 0.14,
-        "fundamental_context": 0.13,
-        "risk_tradeability": 0.15,
+        "market_regime": 0.10,
+        "classical_ta": 0.12,
+        "market_structure": 0.10,
+        "volume_momentum": 0.08,
+        "market_structure_smc": 0.07,
+        "ichimoku_cloud": 0.05,
+        "fibonacci_levels": 0.04,
+        "on_chain_flow": 0.06,
+        "funding_rate": 0.07,
+        "orderbook_micro": 0.06,
+        "liquidity_heatmap": 0.06,
+        "pattern_recognition": 0.05,
+        "fundamental_context": 0.06,
+        "risk_tradeability": 0.08,
     },
     "directional_roles": {
         "technical_analyst":      {"weight": 0.34, "confidence_cap": 1.00},

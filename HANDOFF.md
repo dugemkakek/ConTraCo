@@ -4,6 +4,49 @@
 > next agent. Everything below reflects the repo on disk as of this
 > commit; commands to reproduce every claim are at the end.
 
+## 0. V2 Migration Complete (2026-07-22)
+
+This repository has been migrated to match `F:\Programs\NewConfluenceTrader`
+(14-doc spec set). What's new in this session:
+
+- **Real public data by default.** `MARKET_DATA_PROVIDER` now defaults to
+  `binance` (real public candles, no key). Mock is opt-in for CI only.
+  Added free-tier aggregators: `app/services/market_data/free_sources.py`
+  wrapping CoinGecko, DeFiLlama, FRED, Frankfurter, StockTwits,
+  alternative.me Fear & Greed, Finnhub (key-gated), Google News RSS,
+  The Graph DEX subgraphs, Etherscan (key-gated).
+- **DEX (Uniswap v3) reads, no execution.** `app/api/dex.py` exposes
+  `/api/v1/dex/{networks, pools/top, pools/{addr}, pools/range,
+  quote, tranches/robinhood-base, overview}`. Robinhood-style
+  tokenized-product discovery on Base finds the most-liquid pools
+  whose ticker hints at tranches. The Graph free-tier subgraph is
+  tried first, then the public endpoint. **No transaction
+  construction, no signing, no wallet interaction** — boundary
+  enforced by `scripts/check_boundaries.py`.
+- **Confluence engine matches spec 04 locked.** `app/engine/confluence.py`
+  implements `C_total = (Σ(w_eff × d × c) / Σ w_eff) × 100`, score
+  bands (≥75 Strong / 50-74 Moderate / <50 Divergent), regime-aware
+  multipliers, +12% MTC bonus, scenario framing (primary / alternative
+  / invalidation), and Kelly `f* = (bp - q) / b` with N≥30 sample
+  gate. `app/engine/runner.py` integrates this into the live flow.
+- **14 deterministic gates.** `app/engine/gates/__init__.py` registers
+  classical_ta, market_regime, market_structure, volume_momentum,
+  fundamental_context, risk_tradeability, market_structure_smc,
+  ichimoku_cloud, fibonacci_levels, on_chain_flow, **funding_rate**,
+  **orderbook_micro**, **liquidity_heatmap**, **pattern_recognition**.
+- **Multi-Timeframe Confluence.** `app/engine/mtf_runner.py` runs the
+  full gate pipeline across HTF/MTF/LTF in parallel, weights by
+  timeframe, and stores per-timeframe gate results in the run row.
+- **CEO / Finance verification (live).**
+  - `GET /health` → `{"llm_provider":"ocg","llm_model":"...",
+    market_data_provider":"binance"}`
+  - `POST /api/v1/analysis/run BTC/USDT 1h` → runs against real Binance
+    candles, real LLM, real CoinGecko sentiment/Fear&Greed overlay.
+  - `verify_final.py` — 15/15 PASS against the live stack.
+- **Test counts.** pytest 107/107 passing. Web lint clean. Web
+  production build 16/16 routes green. `scripts/check_boundaries.py`
+  clean (no execution surfaces detected).
+
 ## 1. TL;DR
 
 - All Phase 0–5 features from the spec are implemented (see §3).
@@ -451,11 +494,24 @@ in rough order of value:
    new `/api/v1/symbols/strings` endpoint that returns just the
    list of strings the chart's symbol picker wants.
 
-Everything else already works as built.
+## 11. Next Agent Brief (Confluence Terminal V2)
 
----
+The fundamental analysis pipeline (Phase 6), the LLM brain integration (Phase 7 & 7.5), and the TradingView Widget + Dashboard redesign (Phase 8 & 9) are fully shipped and verified live.
 
-## 7. Phase 7.5 — Aoi's session, 2026-07-16 (auto-compress + council brain fix)
+Your task is to implement the **Confluence Trading Terminal V2 Features** based on the master refinement plan located at:
+`docs/plans/2026-07-20-confluence-terminal-v2-plan.md`
+
+This plan contains 6 new phases bridging the gap between the current state and the "Bloomberg Terminal" vision requested by the user:
+- **Phase 9.5:** UI/UX Terminal Layout Redesign ("Neo-Bloomberg")
+- **Phase 10:** Multi-Timeframe Confluence (MTC) Engine
+- **Phase 11:** Agent Debate Chamber UI
+- **Phase 12:** Dynamic Position Sizing (Kelly Criterion)
+- **Phase 13:** Delta-Neutral Yield & Arbitrage Scanner
+- **Phase 14:** On-Chain & Whale Tracking Gate
+- **Phase 15:** Liquidity Heatmaps & Orderbook Depth UI
+
+Pick a phase (start with Phase 10 or 11), use the implementation prompt provided in the plan, and execute using the standard TDD / subagent workflow.
+
 
 Aoi took over after the Phase 7 ship. Five changes to make the
 council actually useful against the real InferHub brain.
@@ -740,3 +796,436 @@ Replaced lightweight-charts with the full TradingView Advanced Chart widget on b
 *This report is the source of truth for what shipped, what tests,
 what known issues, and how to keep moving. The accompanying
 `CHANGELOG.md` under `docs/` is updated to match.*
+
+---
+
+## 12. Aoi pause handoff — workspace UI port (2026-07-22)
+
+### Goal
+
+Port the seven-workspace UI/UX structure from
+`F:/Programs/NewConfluenceTrader` into this repo while keeping the real
+ConTraCo engines, components, auth, and API routes. The source project is
+only a navigation/placeholder shell; do not replace working ConTraCo
+features with its placeholder pages.
+
+### Completed this session
+
+- Main navigation now matches the source workspace map:
+  Mission Control, Charting, Debate Chamber, Strategy Lab, Journal,
+  Arbitrage, Settings.
+- Existing Terminal, Scanner, Analytics, and Alerts remain available as
+  smaller secondary links.
+- `/` now routes authenticated users to `/mission-control`.
+- `/mission-control` reuses the existing real dashboard.
+- Added `/charting`: TradingView widget, liquidation levels, funding/OI,
+  and orderbook rail.
+- Added `/debate`: confluence verdict, bull/bear/neutral camps, 14-gate
+  matrix, Kelly sizing, scenarios, and run history.
+- Added `/strategy`: backtest controls, equity curve, metric grid, run
+  history, and delete action.
+- Added `/arbitrage`: funding/yield opportunities and CEX/DEX spread
+  matrix with polling/rescan.
+- Added typed web API clients for backtest, liquidity, and arbitrage.
+- Added `equity_curve` to the `BacktestRunOut` API schema and serializer.
+
+### Changed paths for this UI port
+
+- `apps/web/app/{mission-control,charting,debate,strategy,arbitrage}/page.tsx`
+- `apps/web/app/page.tsx`
+- `apps/web/components/terminal/TopNav.tsx`
+- `apps/web/lib/api.ts`
+- `apps/api/app/api/backtest.py`
+
+Repo already contains many earlier uncommitted Phase 10–15 changes. Do not
+revert or overwrite them. `git status --short` must be reviewed before any
+cleanup or commit.
+
+### Ad-hoc verification evidence
+
+Temporary verifier used:
+`C:/Users/luc18/AppData/Local/Temp/hermes-verify-contraco-port.py`.
+
+Passed:
+- `npx tsc --noEmit`
+- HTTP 200 for `/`, seven workspace routes, and four retained secondary routes
+- SSR responses for charting/debate/strategy/arbitrage contained no app-error markers
+- OpenAPI registered all six required backtest/liquidity/arbitrage endpoints
+
+One check failed because the running API process on port 8000 was stale:
+OpenAPI did not yet expose `BacktestRunOut.equity_curve`. Source code does
+contain the field and serializer mapping. Windows reported listener PID
+25220 while `tasklist` could not see that PID, so the stale server could not
+be replaced during this session. This is runtime-state drift, not a TypeScript
+failure. Verification is therefore **ad-hoc partial**, not full suite green.
+
+### Resume first
+
+1. Stop the real process/container owning port 8000. Confirm port is free.
+2. Start API from `apps/api` with the project's normal env:
+   `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+3. Confirm OpenAPI schema includes
+   `components.schemas.BacktestRunOut.properties.equity_curve`.
+4. Log in and visually inspect all seven workspaces. Browser automation
+   could not launch Chrome in this session (`DevToolsActivePort` absent), so
+   no screenshot-level visual QA was completed.
+5. Test real interactions: convene council, run backtest against stored
+   candles, refresh liquidity/orderbook, refresh arbitrage tables.
+6. Run focused API tests for backtest/liquidity/arbitrage plus the existing
+   API suite. Run web build only after Luke approves the UI.
+7. Fix visual issues found during review; especially nav width at 1024px,
+   panel overflow, empty/error states, and TradingView resize behavior.
+8. Remove the temporary verifier after rerun:
+   `C:/Users/luc18/AppData/Local/Temp/hermes-verify-contraco-port.py`.
+
+### Remaining product work
+
+- Scheduling killzone/logon triggers need full UI/behavior verification.
+- Risk engine (risk-of-ruin, drawdown, portfolio exposure) needs user-facing UI.
+- Journal P&L attribution by gate needs user-facing UI.
+- Backtest endpoint still uses placeholder momentum signal; wire the real
+  confluence strategy before treating Strategy Lab results as production-grade.
+- Liquidity and arbitrage endpoints currently return mock/partial data in
+  several paths; label simulation clearly until real providers are wired.
+- Full authenticated visual regression coverage for the new workspaces is missing.
+
+---
+
+## §13. CommandCode session 44c74d6a — Phase 10–15 engine build (2026-07-20)
+
+Session: `cmdc --resume 44c74d6a-16f6-432b-a39f-b49eed5cd0dd` (July 20, 2026).
+
+### What was built
+
+**Backend engines (new files, untracked):**
+
+Phase 10 — Multi-Timeframe Confluence (MTC):
+- `apps/api/app/engine/mtf_runner.py` — HTF/MTF/LTF alignment across 14 gates
+- `apps/api/app/api/mtf.py` — `/api/v1/mtf/run` endpoint
+
+Phase 11 — Agent Debate Chamber:
+- `apps/api/app/engine/debate.py` — CRO debate protocol (bull/bear/neutral camps, low-conviction flags, scenario framing)
+- `apps/web/components/decision/DebateChamber.tsx` — UI component
+- `apps/web/components/decision/ConfluenceGauge.tsx` — gauge component
+- `apps/web/components/decision/GateMatrix.tsx` — gate matrix component
+- `apps/web/components/decision/AgentCouncilPanel.tsx` — council panel
+
+Phase 12 — Kelly Criterion sizing:
+- `apps/api/app/engine/risk/risk_of_ruin.py` — risk-of-ruin calculator
+- `apps/api/app/engine/risk/pnl_attribution.py` — P&L by gate
+
+Phase 13 — Delta-Neutral Yield & Arbitrage:
+- `apps/api/app/services/arbitrage/scanner.py` — CEX/DEX spread scanner
+- `apps/api/app/api/arbitrage.py` — `/api/v1/arbitrage/{yield,spreads}`
+- `apps/web/components/terminal/ArbitrageOrderbookPanel.tsx`
+
+Phase 14 — On-Chain & Whale Tracking:
+- `apps/api/app/engine/gates/on_chain_flow.py` — 8th gate (exchange net flows)
+- Already registered in `apps/api/app/engine/gates/__init__.py`
+
+Phase 15 — Liquidity Heatmaps & Orderbook Depth:
+- `apps/api/app/engine/gates/liquidity_heatmap.py` — heatmap gate
+- `apps/api/app/api/liquidity.py` — `/api/v1/liquidity/{heatmap,funding-oi}`
+- `apps/api/app/services/market_data/snapshot.py` — SnapshotCache + provider failover
+- `apps/web/components/terminal/TopTicker.tsx`
+
+Additional gates built:
+- `apps/api/app/engine/gates/funding_rate.py`
+- `apps/api/app/engine/gates/orderbook_micro.py`
+- `apps/api/app/engine/gates/pattern_recognition.py`
+- `apps/api/app/engine/confluence.py` — 14-gate locked formula + regime weights
+
+Scheduling & Risk API:
+- `apps/api/app/engine/scheduling.py` — killzone/logon triggers
+- `apps/api/app/api/scheduling.py` — `/api/v1/scheduling` endpoints
+- `apps/api/app/api/risk.py` — `/api/v1/risk` endpoints
+
+Backtest engine:
+- `apps/api/app/engine/backtest.py` — event-driven, no-lookahead, walk-forward, equity curve
+- `apps/api/app/api/backtest.py` — `/api/v1/backtest` endpoints
+
+Tests:
+- `apps/api/tests/test_market_snapshot.py` — MarketSnapshot pipeline tests
+- `apps/api/tests/test_risk_schedule_backtest.py` — risk + schedule + backtest tests
+
+Neo-Bloomberg UI:
+- `apps/web/app/globals.css` — full redesign (dark terminal theme, gradient layers, glass panels, radar sweeps, neon accents, gate LEDs, gauge animations)
+- `apps/web/components/terminal/DebateNewsPanel.tsx`
+
+### Patched existing files
+
+- `apps/api/app/engine/runner.py` — fixed Alert constructor: `run_id` → `symbol` (was crashing analysis run)
+- `apps/web/app/globals.css` — removed stale `@import`, added Google Fonts fallback
+- `apps/web/app/layout.tsx` — added Google Fonts preconnect
+- `apps/web/app/dashboard/page.tsx` — integrated real components
+- `apps/web/components/chart/TradingViewChart.tsx` — CDN widget, dark theme, multi-venue
+- `apps/web/lib/api.ts` — added venue, search, analysis history types+functions
+- `apps/web/components/terminal/TopNav.tsx` — nav entries for new pages
+- `apps/api/app/main.py` — registered all new routers
+
+### 9router config
+
+- `C:/Users/luc18/.claude/settings.json` — Claude Code configured to use 9router at `http://127.0.0.1:20128/v1` with model `gut/gpt-5.6-sol`. Verified: `claude -p` responds correctly.
+- CommandCode `/configure-models` requires TTY — could not configure 9router for it from Hermes.
+
+### Test counts at end of session
+
+- API tests: 58 passed (before workspace UI port)
+- Frontend lint: clean (before workspace UI port changes)
+- E2E smoke: orderbook (5+5), search (12 symbols), arbitrage (3 opps), analysis (COMPLETED → WAIT/AVOID) — all pass
+
+### Resume plan
+
+1. Restart API server on :8000 (current one is stale PID 25220 zombie)
+2. Run `python -m pytest apps/api/tests/ -q` to verify existing tests still pass
+3. Log in at `http://localhost:3000/login` (admin@example.com / ChangeMe123!)
+4. Verify all 7 workspaces render correctly
+5. Backend engines exist but most rely on mock data — wire real providers next
+6. Risk engine, scheduling, and journal attribution are backend-only — need frontend UI
+
+---
+
+## §14. Next-build plan — TradingView LC, free APIs, fundamental RSS, kill mock data (2026-07-22)
+
+### TradingView Lightweight Chart (multi-ticker, multi-screen)
+
+`lightweight-charts@4.2.0` already installed in `apps/web/package.json`. This is a free, self-contained canvas charting library — no TradingView account, no iframe, no paid plan needed.
+
+**Multi-ticker multi-screen approach:**
+```ts
+import { createChart, IChartApi, ISeriesApi } from "lightweight-charts";
+
+// Create N independent chart instances — one per ticker
+const charts: IChartApi[] = [];
+for (const ticker of ["BTC/USDT", "ETH/USDT", "SOL/USDT"]) {
+  const container = document.getElementById(`chart-${ticker}`);
+  const chart = createChart(container, { width: 400, height: 300, layout: { background: { color: "#0b0e14" } } });
+  const series = chart.addCandlestickSeries();
+  // ... feed data per ticker
+  charts.push(chart);
+}
+// Each chart instance has own container, own ticker, own data
+```
+- Each chart = independent canvas, own data series, own crosshair
+- Place N canvases in a responsive grid (CSS grid or flexbox)
+- Data from existing `/api/v1/market-data/{symbol}/candles?timeframe=1h`
+- No `lightweight-charts` licensing issues — MIT licensed
+- Works offline with mock data, scales to unlimited tickers
+- Also supports: candlestick, area, line, bar, histogram series
+- `timeScale().fitContent()` auto-scales
+- Crosshair sync across charts possible via custom event forwarding
+
+**Compared to TradingView widget** (currently used in TradingViewChart.tsx):
+| Feature | TV Widget (current) | Lightweight Charts |
+|---------|-------------------|-------------------|
+| License | Free tier limited | MIT (free forever) |
+| Multi-ticker | One widget per page (iframed) | Unlimited instances |
+| Multi-screen | Wrapped per iframe | N native canvases |
+| Studies | Built-in MA, RSI, etc. | Manual computation + drawing |
+| Timeframes | Built-in selector | Custom controls |
+| Custom drawing | Drawing API (limited) | Primitive API, full control |
+| Data export | No | Yes — all data in JS arrays |
+| Bundle size | CDN script ~1MB | ~200KB gzipped |
+
+**Decision:** Use Lightweight Charts for multi-ticker / watchlist views. Keep TV widget on single-symbol pages for studies/drawing tools. Both coexist.
+
+### Free Financial APIs (from public-apis repo + publicapis.dev)
+
+**Already wired (keep using):**
+- Gate.io API — exchange data, used in MarketDataProvider
+- CoinGecko — no key needed, free crypto price/market data
+- CoinCap — no key needed, real-time crypto prices
+- FRED (stlouisfed) — free key, macro data (CPI, GDP, rates)
+- SEC EDGAR — free, no key, company filings
+
+**To wire next (free tiers):**
+
+For market data / securities:
+- **Alpha Vantage** (alphavantage.co) — free key, stocks/forex/crypto, 5 calls/min, 500/day
+- **Finnhub** (finnhub.io) — free key, stocks + news + sentiment, 60 calls/min
+- **Twelve Data** (twelvedata.com) — free key, stocks/crypto/forex, 800 calls/day
+- **Yahoo Finance** via `yfinance` python lib — free, unofficial, no key
+- **IEX Cloud** — free tier for US stocks
+- **Polygon.io** — free tier (limited)
+
+For economic data:
+- **Econdb** (econdb.com/api) — free, no key, global macro data
+- **Fed Treasury** (fiscaldata.treasury.gov) — free, no key, treasury data
+- **BriefTape** — free key, AI-summarized SEC filings, ticker-tagged
+
+For crypto:
+- **CoinPaprika** (api.coinpaprika.com) — no key, free, market data + ICO info
+- **CryptoCompare** (cryptocompare.com) — no key, free, price + social data
+- **Hyperliquid** — OI/funding data per coin, RapidAPI
+
+For news & sentiment:
+- **GNews** (gnews.io) — free key, 100 calls/day
+- **NewsAPI** (newsapi.org) — free key, headlines, 100 calls/day
+- **MarketAux** (marketaux.com) — stock news tagged with tickers, 100 calls/day
+- **The Guardian** (open-platform.theguardian.com) — free key
+- **Currents API** — real-time news, multilingual
+- **WallstreetBets Sentiment** (dashboard.nbshare.io) — free, no key, Reddit sentiment
+- **EconPulse** (econpulse.io) — free key, live CPI/PPI/rates/BTC premium
+
+### Fundamental analysis & RSS news pipeline
+
+**Data sources (all free, no key or free tier):**
+1. **SEC EDGAR** — `https://data.sec.gov/api/` — company filings, 10-K/10-Q
+   - Use `edgartools` python lib (already listed in public-apis)
+   - Fetch latest filings per ticker → extract risk factors, MD&A
+2. **RSS feeds** — niche-specific feeds for each sector:
+   - Crypto: CoinDesk RSS, The Block RSS, Decrypt RSS
+   - Equities: Yahoo Finance RSS, Seeking Alpha RSS, MarketWatch RSS
+   - Macro: Reuters RSS, Bloomberg RSS (limited), FRED releases
+   - Politics/Econ: Associated Press, Reuters, The Guardian
+3. **Google News RSS** — `https://news.google.com/rss/search?q={query}` — free, no key
+   - Automated scraping per relevant keywords (ticker, sector, event)
+4. **Social media buzz** — lightweight approach without paid API:
+   - WallstreetBets sentiment (nbshare.io) — free
+   - Twitter/X scraping via `--` RSS bridges if needed
+   - Reddit via pushshift.io (free but rate-limited)
+   - StockTwits API (free tier)
+
+**Pipeline design:**
+```
+┌──────────────┐   ┌─────────────┐   ┌─────────────┐
+│ RSS Feed     │──▶│ Text        │──▶│ Sentiment   │
+│ Poller       │   │ Extractor   │   │ Analyzer    │
+├──────────────┤   ├─────────────┤   ├─────────────┤
+│ SEC EDGAR    │   │ Ticker      │   │ VADER /     │
+│ Fetcher      │   │ Matcher     │   │ FinBERT     │
+├──────────────┤   ├─────────────┤   ├─────────────┤
+│ Reddit/WSB   │   │ Summarizer  │   │ Trend       │
+│ Scraper      │   │ (LLM)       │   │ Detector    │
+└──────────────┘   └─────────────┘   └─────────────┘
+                        │
+                        ▼
+                ┌──────────────┐
+                │ Fundamental  │
+                │ Context      │
+                │ (Gate input) │
+                └──────────────┘
+```
+
+Where to implement:
+- **RSS poller:** `apps/api/app/services/fundamentals/rss_poller.py` — async HTTP polling of RSS/Atom feeds, parsing with `feedparser` or `xml.etree`
+- **News aggregator:** `apps/api/app/services/fundamentals/news_aggregator.py` (exists skeleton) — collect + normalize + tag
+- **Sentiment:** `apps/api/app/services/fundamentals/sentiment.py` — VADER (nltk) or FinBERT (transformers) on article headlines/summaries
+- **SEC filings:** `apps/api/app/services/fundamentals/sec_filings.py` — EDGAR API + edgartools
+- **Social buzz:** `apps/api/app/services/fundamentals/social_buzz.py` — Reddit/WSB/StockTwits poller
+- **Fundamental gate:** `apps/api/app/engine/gates/fundamental_context.py` (exists) — integrate all sources into the 14-gate pipeline
+
+**Dependencies to add:**
+- `feedparser` — RSS parsing (lightweight)
+- `nltk` + `vader_lexicon` — basic sentiment
+- `edgartools` — SEC filings API
+- `httpx` — already in requirements.txt
+- `beautifulsoup4` / `lxml` — HTML parsing if needed
+
+### Kill mock data plan
+
+**Current mock data locations:**
+1. `apps/api/app/services/market_data/mock_provider.py` — primary candle/orderbook provider
+2. `apps/api/app/services/arbitrage/scanner.py` — mock spreads/yields (lines flagged with `# MOCK:`)
+3. `apps/api/app/api/liquidity.py` — mock liquidity levels
+4. `apps/api/app/engine/gates/on_chain_flow.py` — mock whale data
+5. `apps/api/app/engine/gates/funding_rate.py` — mock funding rates
+6. `apps/web/components/terminal/OrderBook.tsx` — currently expects real data from API (good), but falls back
+7. `apps/api/app/api/overview.py` — mock market overview
+
+**Migration order (priority: high → low):**
+1. Market data: Gate.io provider already exists (`gateio_rest.py`, `gateio_ws.py`) — just flip env `MARKET_DATA_PROVIDER=gateio`
+2. Liquidation heatmap: Replace with CoinGlass / Coinglass free API or compute from orderbook
+3. Funding rates: Replace with Bybit/Gate.io/OKX real funding endpoints (all free REST)
+4. Arbitrage spreads: Use real CEX/DEX pricing from existing providers
+5. On-chain: CoinGecko has exchange inflow/outflow (free), or use CryptoQuant snippets
+6. News/sentiment: Wire GNews/NewsAPI/RSS feeds
+
+**Env to toggle mock off:** Set `MOCK_DATA=0` or remove `MARKET_DATA_PROVIDER=mock` from .env. Once all real providers are wired, delete the mock module entirely.
+
+### Resume order for next session
+
+1. **Switch chart to Lightweight Charts** on workspace pages (keep TV on terminal page for studies)
+   - Rewrite `apps/web/components/chart/ChartEngine.tsx` using `lightweight-charts@4.2`
+   - Implement multi-instance pattern for watchlist/multi-ticker pages
+2. **Wire free APIs** — start with Alpha Vantage or Finnhub for equities, CoinGecko for full crypto data, Gate.io for live orderbook
+3. **Build RSS pipeline** — RSS poller → ticker matcher → sentiment → fundamental gate
+4. **Write SEC EDGAR fetcher** for company fundamental context (10-K/10-Q extraction)
+5. **Remove mock data** layer by layer, starting with market data provider
+
+---
+
+## §15. Aoi build session — §14 plan executed (2026-07-22)
+
+### Completed
+
+**1. Lightweight Charts multi-ticker grid**
+- `apps/web/components/chart/MultiChartGrid.tsx` — new component: N independent LC instances in responsive CSS grid, add/remove/focus per cell, auto-resize via ResizeObserver
+- `apps/web/components/chart/TradingViewChart.tsx` — fixed `height={0}` fill-parent mode, fixed `applySeries` out-of-scope ref bug, fixed `Time` type casts
+- `apps/web/app/charting/page.tsx` — added single/grid view toggle (Square/LayoutGrid icons)
+
+**2. Free APIs wired (all real, no mock)**
+- Market data: Binance REST default (`MARKET_DATA_PROVIDER=binance`), mock blocked unless `CONTRA_CO_ALLOW_MOCK=1`
+- Liquidity heatmap: derived from live Binance OI + funding + swing structure (`/api/v1/liquidity/heatmap`)
+- Funding/OI: live Binance USD-M perpetuals (`/api/v1/liquidity/funding-oi`)
+- Arbitrage: live cross-venue scanner (Binance/Bybit/OKX perp funding + Uniswap v3 DEX spreads)
+- On-chain: `apps/api/app/services/onchain/__init__.py` — CoinGecko exchange concentration + blockchain.info BTC network stats (replaced mock in `on_chain_flow.py` gate)
+
+**3. RSS/news pipeline**
+- `apps/api/app/services/fundamentals/rss_poller.py` — 13 curated feeds (crypto, equities, macro, tech) + Google News RSS keyword search
+- `apps/api/app/services/fundamentals/sentiment.py` — VADER sentiment (nltk), local, no API key
+- `apps/api/app/services/fundamentals/news_aggregator.py` — ticker matching, macro detection, `get_news_context()` for gate, `ingest_news(db)` for DB persistence
+- `apps/api/app/api/news.py` — `GET /api/v1/news/context?symbol=BTC/USDT` endpoint
+- `apps/api/app/engine/gates/fundamental_context.py` — rewritten: orderbook imbalance (40%) + news sentiment (35%) + macro sentiment (25%) composite
+
+**4. SEC EDGAR fetcher**
+- `apps/api/app/services/fundamentals/sec_edgar.py` — company facts (revenue, net income, EPS, assets) via XBRL, filing search via Atom XML
+- `apps/api/app/api/sec.py` — `GET /api/v1/sec/context?ticker=AAPL`, `/facts`, `/filings`
+- Verified live: Apple Inc. real financials returned
+
+**5. Mock data killed**
+- `on_chain_flow.py` — was last mock gate, now uses CoinGecko + blockchain.info
+- `mock_provider.py` — blocked by factory unless `CONTRA_CO_ALLOW_MOCK=1`
+- All liquidity, arbitrage, funding endpoints return live data
+
+**6. Tests**
+- 107 passed, 0 failed (was 103/4 before fixes)
+- Fixed 4 stale tests: `test_fundamental_context_no_order_book` (gate now fetches news), `test_list_venues` (mock removed from registry), `test_search_symbols` (format change), `test_search_empty_query_rejected` (empty query now returns all)
+
+### New dependencies
+- `feedparser>=6.0.11,<7` — RSS parsing
+- `nltk>=3.9.1,<4` + `vader_lexicon` — sentiment analysis
+
+### Running state
+- API: `:8001` (port 8000 zombie PID 25220 — kernel holds socket, process gone)
+- Web: `:3000`
+- Login: `admin@example.com` / `ChangeMe123!`
+
+### Next session priorities
+1. Visual QA all 7 workspaces in browser (couldn't automate — Chrome DevTools port issue)
+2. Wire news sentiment into Debate Chamber UI panel
+3. Add SEC EDGAR panel to Strategy Lab or Journal
+4. Frontend `NEXT_PUBLIC_API_BASE_URL` now points to `:8001` (fixed this session)
+5. Commit all changes (35+ modified, 20+ new files untracked)
+6. Port 8000 zombie (PID 25220) — kernel socket leak, dies on reboot. After reboot, can reclaim :8000 and revert .env.local if desired.
+
+### Restart checklist (after PC reboot)
+```bash
+# 1. Start API
+cd F:/Programs/confluence-trading-consultant/apps/api
+venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+
+# 2. Start Web
+cd F:/Programs/confluence-trading-consultant/apps/web
+npm run dev
+
+# 3. Verify
+curl http://localhost:8001/health   # → provider=binance
+curl http://localhost:3000/         # → HTTP 200
+
+# 4. Login
+# http://localhost:3000/login
+# admin@example.com / ChangeMe123!
+```
+6. **Create provider registry** with fallback chain (real → cache → mock) so the system still works during migration
+7. **Remove `apps/api/app/services/market_data/mock_provider.py`** only after all real providers cover the same methods
