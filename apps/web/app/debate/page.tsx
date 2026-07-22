@@ -159,11 +159,11 @@ export default function DebatePage() {
                   <span className="terminal-label">Kelly Sizing</span>
                   <div className="grid grid-cols-2 gap-px bg-border mt-2">
                     {[
-                      ["WIN PROB", `${(confluence.kelly.win_probability * 100).toFixed(0)}%`],
-                      ["W/L RATIO", confluence.kelly.win_loss_ratio.toFixed(2)],
-                      ["FULL KELLY", `${(confluence.kelly.full_kelly * 100).toFixed(1)}%`],
-                      ["HALF KELLY", `${(confluence.kelly.half_kelly * 100).toFixed(1)}%`],
-                      ["QUARTER", `${(confluence.kelly.quarter_kelly * 100).toFixed(1)}%`],
+                      ["WIN PROB", confluence.kelly.win_probability != null ? `${(confluence.kelly.win_probability * 100).toFixed(0)}%` : "—"],
+                      ["W/L RATIO", confluence.kelly.win_loss_ratio != null ? confluence.kelly.win_loss_ratio.toFixed(2) : "—"],
+                      ["FULL KELLY", confluence.kelly.full_kelly != null ? `${(confluence.kelly.full_kelly * 100).toFixed(1)}%` : "—"],
+                      ["HALF KELLY", confluence.kelly.half_kelly != null ? `${(confluence.kelly.half_kelly * 100).toFixed(1)}%` : "—"],
+                      ["QUARTER", confluence.kelly.quarter_kelly != null ? `${(confluence.kelly.quarter_kelly * 100).toFixed(1)}%` : "—"],
                       ["ACTIONABLE", confluence.is_actionable ? "YES" : "NO"],
                     ].map(([k, v]) => (
                       <div key={k} className="bg-panel px-2 py-1.5">

@@ -81,7 +81,7 @@ export default function DashboardPage() {
             <div className="text-[9px] text-muted font-mono">DECISION SUPPORT / HUMAN EXECUTION</div>
           </div>
         </div>
-        <SymbolSearch onSelect={(sym) => setSymbol(sym)} />
+        <SymbolSearch onSelect={(sym, exch) => { setSymbol(sym); if (exch) setVenue(exch); }} />
         <VenueSelector value={venue} onChange={setVenue} />
         <TimeframeSelector value={timeframe} onChange={setTimeframe} />
         <label className="flex items-center gap-1 text-xs text-muted cursor-pointer">

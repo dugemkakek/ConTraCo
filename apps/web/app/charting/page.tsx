@@ -148,7 +148,7 @@ export default function ChartingPage() {
         <span className="terminal-label mr-1">Charting & Liquidity</span>
         {view === "single" && (
           <>
-            <SymbolSearch onSelect={(sym) => setSymbol(sym)} />
+            <SymbolSearch onSelect={(sym, exch) => { setSymbol(sym); if (exch) setVenue(exch); }} />
             <VenueSelector value={venue} onChange={setVenue} />
             <TimeframeSelector value={timeframe} onChange={setTimeframe} />
             <span className="ml-auto font-mono text-[9px] text-muted">
