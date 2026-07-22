@@ -53,7 +53,7 @@ function LiquidityPanel({ symbol }: { symbol: string }) {
                     ${l.price.toLocaleString()}
                   </span>
                   <span className="text-muted">
-                    {(l.volume_usd / 1e6).toFixed(0)}M · {Math.round(l.intensity * 100)}%
+                    {((l.volume_usd ?? 0) / 1e6).toFixed(0)}M · {Math.round((l.intensity ?? 0) * 100)}%
                   </span>
                 </div>
                 <div className="h-2 bg-bg overflow-hidden">
@@ -93,13 +93,13 @@ function FundingOIPanel({ symbol }: { symbol: string }) {
         <span className="terminal-label">Funding / Open Interest</span>
       </header>
       <div className="grid grid-cols-2 gap-px bg-border">
-        <Cell label="FUNDING NOW" value={f ? `${(f.current * 100).toFixed(4)}%` : "—"} tone={f && f.current >= 0 ? "bull" : "bear"} />
-        <Cell label="PREDICTED" value={f ? `${(f.predicted * 100).toFixed(4)}%` : "—"} tone={f && f.predicted >= 0 ? "bull" : "bear"} />
-        <Cell label="ANNUALIZED" value={f ? `${f.annualized.toFixed(1)}%` : "—"} tone={f && f.annualized >= 0 ? "bull" : "bear"} />
+        <Cell label="FUNDING NOW" value={f?.current != null ? `${(f.current * 100).toFixed(4)}%` : "—"} tone={f?.current != null && f.current >= 0 ? "bull" : "bear"} />
+        <Cell label="PREDICTED" value={f?.predicted != null ? `${(f.predicted * 100).toFixed(4)}%` : "—"} tone={f?.predicted != null && f.predicted >= 0 ? "bull" : "bear"} />
+        <Cell label="ANNUALIZED" value={f?.annualized != null ? `${f.annualized.toFixed(1)}%` : "—"} tone={f?.annualized != null && f.annualized >= 0 ? "bull" : "bear"} />
         <Cell label="TREND" value={f?.trend?.toUpperCase() ?? "—"} />
-        <Cell label="OI" value={oi ? `$${(oi.current / 1e9).toFixed(2)}B` : "—"} />
-        <Cell label="OI 24H" value={oi ? `${oi.change_24h_pct >= 0 ? "+" : ""}${oi.change_24h_pct.toFixed(1)}%` : "—"} tone={oi && oi.change_24h_pct >= 0 ? "bull" : "bear"} />
-        <Cell label="L/S RATIO" value={oi ? oi.long_short_ratio.toFixed(2) : "—"} tone={oi && oi.long_short_ratio >= 1 ? "bull" : "bear"} />
+        <Cell label="OI" value={oi?.current != null ? `$${(oi.current / 1e9).toFixed(2)}B` : "—"} />
+        <Cell label="OI 24H" value={oi?.change_24h_pct != null ? `${oi.change_24h_pct >= 0 ? "+" : ""}${oi.change_24h_pct.toFixed(1)}%` : "—"} tone={oi?.change_24h_pct != null && oi.change_24h_pct >= 0 ? "bull" : "bear"} />
+        <Cell label="L/S RATIO" value={oi?.long_short_ratio != null ? oi.long_short_ratio.toFixed(2) : "—"} tone={oi?.long_short_ratio != null && oi.long_short_ratio >= 1 ? "bull" : "bear"} />
         <Cell label="SOURCE" value={data?.source?.toUpperCase() ?? "—"} />
       </div>
     </section>

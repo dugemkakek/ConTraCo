@@ -1,185 +1,203 @@
-# Confluence Trading Consultant
+# ConTraCo — Confluence Trading Consultant
 
-AI-assisted, human-decides crypto trading terminal. Deterministic gates
-plus an AI council, balanced through a 7-stage decision engine, surface a
-clear **LONG / SHORT / WAIT / AVOID** call for every (symbol, timeframe)
-pair. The trader always pulls the trigger — the system only recommends.
+**Stop guessing. Start deciding with evidence.**
+
+ConTraCo is an institutional-grade crypto trading terminal that fuses 14
+deterministic analysis gates, a 6-agent AI debate council, and a 7-stage
+decision engine into one clear call: **LONG / SHORT / WAIT / AVOID**.
+
+You always pull the trigger. ConTraCo hands you the loaded weapon.
 
 > Decision support only — human approval required. Not financial advice.
 
-## Quick start (Docker)
+---
 
+## Why ConTraCo
+
+| Problem | ConTraCo |
+|---|---|
+| 17 indicators, no consensus | 14 gates scored, weighted, regime-adjusted → single confluence score |
+| AI hallucinates confidence | Spec-enforced `confidence_cap` + `role_weight` — the AI can't over-assert |
+| Backtests lie | Walk-forward split, per-gate accuracy, no-lookahead engine |
+| One timeframe = tunnel vision | Multi-Timeframe Confluence: HTF/MTF/LTF alignment in one run |
+| "Where are the stops?" | Liquidity heatmaps, funding/OI, orderbook depth — all in the chart rail |
+| Position sizing is a coin flip | Kelly Criterion `f* = (bp - q) / b` with N≥30 sample gate |
+
+---
+
+## Features
+
+### 14 Deterministic Gates
+Classical TA · Market Regime · Market Structure (SMC) · Volume & Momentum ·
+Ichimoku Cloud · Fibonacci Levels · Funding Rate · Orderbook Micro ·
+Liquidity Heatmap · Pattern Recognition · On-Chain Flow · Fundamental Context ·
+Risk & Tradeability · Market Structure (swing BOS/CHoCH)
+
+Each gate returns a score [-100, 100], confidence, direction, and evidence.
+Weights are strategy-configurable. Regime-aware multipliers adapt to
+trending vs. ranging vs. volatile markets.
+
+### AI Debate Council (6 Roles)
+Technical Analyst · Market Context Analyst · Risk Reviewer · Skeptical
+Reviewer · Trade Planner · Synthesis Reviewer.
+
+Powered by any OpenAI-compatible LLM (default: InferHub). Spec-defined
+caps prevent any single role from dominating. Risk flags carry veto power.
+Falls back to a deterministic stub when offline — the terminal never breaks.
+
+### Multi-Timeframe Confluence (MTC)
+Run the full 14-gate pipeline across HTF/MTF/LTF simultaneously.
+Timeframe-weighted alignment score. +12% MTC bonus when all three agree.
+
+### Confluence Engine
+`C_total = (Σ(w_eff × d × c) / Σ w_eff) × 100`
+
+Score bands: ≥75 Strong · 50–74 Moderate · <50 Divergent.
+Scenario framing: primary / alternative / invalidation paths.
+
+### Backtest Engine
+Event-driven, no-lookahead, walk-forward. Uses the **real** 14-gate
+confluence signal — not a placeholder. Per-gate accuracy tracking.
+Equity curve + benchmark curve. Configurable fees, slippage, holding period.
+
+### Kelly Criterion Position Sizing
+`f* = (bp - q) / b` — optimal bet sizing from historical win rate and
+setup R:R. N≥30 sample gate prevents overfitting on thin data.
+
+### Multi-Venue Market Data
+Binance · Gate.io · Bybit · Kraken · OKX — real public candles, no API key.
+Venue registry with symbol search across all exchanges.
+
+### Liquidity & Derivatives
+Funding rates (current, predicted, annualized) · Open Interest + 24h change ·
+Long/Short ratio · Liquidation cluster heatmaps · Orderbook depth & imbalance.
+
+### Delta-Neutral Yield & Arbitrage Scanner
+CEX/DEX spread matrix · Funding rate opportunities · Cross-venue yield table.
+
+### On-Chain & Whale Tracking
+Exchange net flows · Whale wallet movements · 8th gate integration.
+
+### Trading Journal + P&L Attribution
+Manual + auto-created entries · Close with exit price · Summary stats ·
+P&L attribution by gate — know which signals actually make money.
+
+### Risk Engine
+Risk-of-ruin calculator · Drawdown guard · Portfolio exposure tracking.
+
+### Auth & Execution
+JWT + bcrypt · Paper trading by default · Live execution with HMAC-signed
+orders (Gate.io) · Per-order notional cap · CORS lockdown.
+
+---
+
+## Seven Workspaces
+
+| Workspace | What it does |
+|---|---|
+| **Mission Control** | Market condition, breadth gauge, movers, ticker grid |
+| **Charting** | TradingView + Lightweight Charts, liquidity heatmap, funding/OI, orderbook |
+| **Debate Chamber** | Confluence verdict, bull/bear/neutral camps, 14-gate matrix, Kelly sizing |
+| **Strategy Lab** | Backtest controls, equity curve, metric grid, run history |
+| **Journal** | Trade log, P&L summary, gate attribution |
+| **Arbitrage** | Funding/yield opportunities, CEX/DEX spread matrix |
+| **Settings** | Versioned strategy editor, gate weights, presets |
+
+Plus: Terminal, Scanner, Analytics, Alerts as secondary views.
+
+---
+
+## Quick Start
+
+### Docker
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-- Web:  http://localhost:3000/terminal/BTC-USDT
-- API:  http://localhost:8000/health
-- API docs: http://localhost:8000/docs
-
-A default admin account is created on first boot from
-`$ADMIN_EMAIL` / `$ADMIN_PASSWORD` (defaults `admin@example.com` /
-`ChangeMe123!`). Register more users via `POST /api/v1/auth/register`
-or the `/register` UI page.
-
-## Quick start (no Docker, local Postgres + SQLite)
-
-The API works without containers. `DATABASE_URL` defaults to a
-SQLite file in the API directory if unset, and `REDIS_URL` falls
-back to an in-process pub/sub shim when no Redis is reachable.
-
+### Local (no Docker)
 ```bash
 # API
 cd apps/api
+python -m venv venv && venv/Scripts/activate   # or source venv/bin/activate
 pip install -r requirements.txt
-pytest -q                                     # 30 tests
 uvicorn app.main:app --reload --port 8000
 
-# Web (separate terminal)
+# Web
 cd apps/web
 npm install
-npm run build
-npm start                                      # production on :3000
-# or for dev with HMR
-npm run dev
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
 ```
+
+- Web: http://localhost:3000
+- API: http://localhost:8000/health
+- Docs: http://localhost:8000/docs
+
+Default admin: `admin@example.com` / `ChangeMe123!` (set `SEED_ADMIN=1`).
+
+### LLM Brain (optional)
+```bash
+# .env in apps/api/
+LLM_API_KEY=sk-...
+LLM_BASE_URL=https://api.inferhub.dev/v1
+LLM_MODEL=ocg/minimax-m3
+```
+Without a key, the deterministic stub keeps everything runnable offline.
+
+---
 
 ## Architecture
 
 ```
-Next.js 15 (terminal, scanner, journal, settings, auth)
-   │  Bearer token in localStorage; SSE for live candles
+Next.js 16 (React 19, Turbopack)
+   │  JWT in localStorage · React Query · TradingView + Lightweight Charts
    ▼
-FastAPI ──► SQLAlchemy 2 ──► Postgres (history, users, gates, runs, trades)
-       └──► Redis (or in-proc shim) for candle fan-out + scan alerts
-       └──► Gate.io REST + WebSocket (or Mock fixture) for market data
-       └──► Deterministic gates + AI council + decision engine
+FastAPI ──► SQLAlchemy 2 ──► Postgres / SQLite
+       └──► Redis (or in-proc shim) for pub/sub
+       └──► Multi-venue REST + WebSocket for market data
+       └──► 14 gates → Confluence engine → AI council → Decision engine
 ```
-
-See [`docs/architecture.md`](docs/architecture.md) for module breakdown and
-[`docs/decision-engine.md`](docs/decision-engine.md) for the full 7-stage
-pipeline spec.
-
-## What's in the box
-
-### Phase 0 + 1 (scaffold) — done
-- Docker Compose with web, api, postgres, redis.
-- FastAPI `/health` and `GET /api/v1/market-data/{symbol}/candles`.
-- Next.js terminal page with `lightweight-charts` and EMA 20/50/200 overlay.
-
-### Phase 2 — done
-- 6 deterministic gates: `market_regime`, `classical_ta`,
-  `market_structure`, `volume_momentum`, `fundamental_context`,
-  `risk_tradeability`. Each is unit-tested.
-- Real **Gate.io spot REST + WebSocket** adapter, env-switched against
-  the deterministic mock. The chart subscribes via `EventSource` and
-  mutates the last bar in place.
-- `AnalysisRun`, `GateResult`, `ModelOpinion`, `Decision`, `TradePlan`
-  persisted to Postgres via SQLAlchemy 2 + Alembic migrations.
-- `SymbolMeta` synced from Gate.io's `/spot/currency_pairs`.
-
-### Phase 3 — done
-- Versioned, audit-trailed `StrategyConfig` with three built-in
-  presets (aggressive, balanced, conservative) and a UI editor at
-  `/settings`.
-- Six-role AI council (`TechnicalAnalyst`, `MarketContextAnalyst`,
-  `RiskReviewer`, `SkepticalReviewer`, `TradePlanner`,
-  `SynthesisReviewer`) — backed by an LLM brain. Default model is
-  **`ocg/minimax-m3`** served via InferHub
-  (`https://api.inferhub.dev/v1`); falls back to a deterministic
-  `StubClient` when no API key is configured so the server stays
-  runnable offline. Spec-defined `role_weight` and `confidence_cap`
-  are always enforced on top of model output.
-- The 7-stage decision engine (`app/engine/decision.py:decide`) per
-  the spec: validate data → compute gates → apply vetoes → council →
-  measure agreement → composite → final state. Rule decisions with 8
-  unit tests.
-- `POST /api/v1/analysis/run` for one-shot runs, `GET
-  /api/v1/analysis/runs` for history.
-
-### Phase 4 — done
-- Background multi-symbol scanner (`POST /api/v1/scanner/run`) that
-  runs the analyzer on the configured universe, persists every run,
-  publishes notable candidates to Redis pub/sub, and surfaces a live
-  status with progress and notable-cards.
-
-### Phase 5 — done
-- JWT + bcrypt auth with `register`, `login`, `me`, and a 401-protected
-  `/api/v1/auth/me`.
-- CORS lockdown via `CORS_ORIGINS`.
-- `Journal` UI (and `/api/v1/journal`) — manual entries, auto-create
-  from orders, close-with-exit-price, delete, summary stats.
-- `Trades` UI (and `/api/v1/trades`) — paper by default; set
-  `LIVE_TRADING=1` and provide `GATEIO_API_KEY/SECRET` to enable real
-  signed order placement on Gate.io. Notional cap (`MAX_ORDER_NOTIONAL_USD`)
-  is enforced either way.
-- The trade panel shows live order status (`FILLED`/`REJECTED`/...)
-  and the exchange-order id.
-
-## Decision engine (spec at a glance)
-
-| Step | Computes |
-|---|---|
-| 1. Gate score | Weighted, confidence-aware sum on [-100, 100] |
-| 2. Model score | Directional role votes weighted by `role_weight × effective_confidence`, capped so skeptic/risk roles can't push confidence higher than 0.35 (but can pull it down without a cap) |
-| 3. Model agreement | Weighted share of roles that agree with the composite majority |
-| 4. Composite | `0.55 × gate + 0.45 × model` (configurable) |
-| 5. Quorum | Must see ≥ `minimum_quorum_gate_count` gates with status |
-| 6. Vetoes | Gate veto, AI hard-veto risk flag, low agreement, low data completeness |
-| 7. Final state | `DATA_INVALID` → `AVOID` → `WAIT` → `LONG_CANDIDATE` → `SHORT_CANDIDATE` |
-
-Trade plan appears only on `LONG/SHORT_CANDIDATE` and includes entry
-(ATR-projected), stop (1.5×ATR opposite side), take-profit (3×ATR or
-2×R:R, whichever is larger), position size, invalidation, and a
-synthesis sentence.
-
-## Data contracts
-
-See [`docs/data-contracts.md`](docs/data-contracts.md). The full Pydantic
-shapes are in `app/schemas/` and the SQLAlchemy ORM is in
-`app/db/models.py`.
-
-## Threat model
-
-See [`docs/threat-model.md`](docs/threat-model.md). Live trading is
-gated by `LIVE_TRADING` and a per-order notional cap. No exchange
-private keys are read until that flag is on. The AI council in this
-build is deterministic and produces no external calls; a future LLM
-backend would inherit the existing hard-veto + confidence-cap
-guardrails.
 
 ## Tests
 
 ```bash
-cd apps/api && pytest -q     # 30 tests
-cd apps/web && npm run build # type-check + production build
+cd apps/api && pytest -q          # 107 tests
+cd apps/web && npm run build      # 16 routes, typecheck + bundle
 ```
 
-## Repo layout
+## Repo Layout
 
 ```
 apps/
-├── api/                # FastAPI
+├── api/                    # FastAPI monolith
 │   ├── app/
-│   │   ├── api/           # HTTP routers (auth, market_data, analysis, ...)
-│   │   ├── db/            # SQLAlchemy engine, models, Redis client
-│   │   ├── engine/        # Gates, council, decision engine, runner, strategy
-│   │   ├── schemas/       # Pydantic request/response shapes
-│   │   └── services/      # Gate.io REST + WS, execution module
-│   └── tests/
-└── web/                # Next.js 15 App Router
-    ├── app/
-    │   ├── (auth)/        # /login, /register
-    │   ├── terminal/[symbol]/
-    │   ├── scan/, journal/, settings/
-    └── components/, lib/
+│   │   ├── api/               # HTTP routers (20+ endpoints)
+│   │   ├── db/                # SQLAlchemy models, Redis client
+│   │   ├── engine/            # Gates, confluence, council, debate,
+│   │   │                      # decision, backtest, MTC, risk, scheduling
+│   │   ├── schemas/           # Pydantic shapes
+│   │   └── services/          # Market data (5 venues), LLM, execution,
+│   │                          # arbitrage, fundamentals, on-chain
+│   └── tests/                 # 107 tests
+└── web/                    # Next.js 16 App Router
+    ├── app/                   # 16 routes (7 workspaces + auth + secondary)
+    ├── components/            # Chart, decision, terminal, dashboard
+    └── lib/                   # API client, auth, indicators
 
-packages/
-├── contracts/            # JSON Schema scaffold for AnalysisRun
-└── strategy-presets/     # aggressive.json, balanced.json, conservative.json
-
-scripts/                   # bootstrap.sh, seed_demo_data.py, verify_contracts.py
-docs/                      # architecture, decision-engine, data-contracts,
-                           # threat-model, changelog
+packages/strategy-presets/     # aggressive, balanced, conservative
+docs/                          # architecture, decision-engine, data-contracts
 ```
+
+## Security
+
+- Live trading gated by `LIVE_TRADING=1` + per-order notional cap
+- No exchange private keys read until live flag is on
+- JWT HS256 + bcrypt — rotate `JWT_SECRET` before any non-local deploy
+- CORS lockdown via `CORS_ORIGINS`
+- See [`docs/threat-model.md`](docs/threat-model.md)
+
+---
+
+## License
+
+Private. All rights reserved.
