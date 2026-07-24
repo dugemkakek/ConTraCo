@@ -2,12 +2,13 @@
 
 GEO NOTE: Binance fapi.binance.com returns empty 200s in some regions
 (Indonesia). Klines + liquidation heatmap use data-api.binance.vision
-which works globally. Funding/OI attempt fapi and degrade gracefully
-to an honest 'unavailable' flag rather than fabricating data.
+which works globally. Funding/OI use CoinGecko derivatives (free, no
+key, no geo-block) as primary, with Binance fapi as fallback.
 """
 from __future__ import annotations
 
 import logging
+import time as _time
 from typing import Any
 
 import httpx
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 BINANCE_VISION = "https://data-api.binance.vision"
 BINANCE_FAPI = "https://fapi.binance.com"
+COINGECKO = "https://api.coingecko.com/api/v3"
 TIMEOUT = 15.0
 
 
@@ -97,7 +99,39 @@ async def get_liquidation_heatmap(
 
 
 async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict[str, Any]:
-    """Funding rate history. Attempts Binance fapi; honest fallback if geo-blocked."""
+    """Funding rate — CoinGecko derivatives (primary), Binance fapi (fallback).
+
+    CoinGecko returns a current snapshot across all exchanges (no history).
+    Binance fapi returns real history but is geo-blocked in some regions.
+    """
+    base = symbol.upper().replace("USDT", "").replace("/USDT", "")
+    now_ms = int(_time.time() * 1000)
+
+    # Primary: CoinGecko derivatives — current funding across exchanges
+    async with _client() as c:
+        try:
+            r = await c.get(f"{COINGECKO}/derivatives", params={"include_tickers": "unexpired"})
+            if r.status_code == 200:
+                rows = []
+                for t in r.json():
+                    sym = (t.get("symbol") or "").upper().replace("_", "").replace("/", "")
+                    if base in sym and "USDT" in sym:
+                        fr = t.get("funding_rate")
+                        if fr is not None:
+                            rows.append({
+                                "time": now_ms,
+                                "funding_rate": float(fr),
+                                "exchange": t.get("market", "unknown"),
+                                "basis": t.get("basis"),
+                                "index": t.get("index"),
+                            })
+                if rows:
+                    return {"symbol": symbol.upper(), "rows": rows[:limit],
+                            "source": "coingecko", "note": "current snapshot, multi-exchange"}
+        except Exception as exc:
+            logger.debug("coingecko funding %s: %s", symbol, exc)
+
+    # Fallback: Binance fapi (works outside geo-blocked regions)
     async with _client() as c:
         try:
             r = await c.get(f"{BINANCE_FAPI}/fapi/v1/fundingRate",
@@ -113,11 +147,41 @@ async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict
         except Exception as exc:
             logger.debug("fapi funding %s: %s", symbol, exc)
     return {"symbol": symbol.upper(), "rows": [], "source": "unavailable",
-            "note": "fapi.binance.com geo-blocked in this region"}
+            "note": "all funding sources unreachable"}
 
 
 async def get_open_interest_history(symbol: str = "BTCUSDT", period: str = "5m", limit: int = 100) -> dict[str, Any]:
-    """Open interest history. Attempts Binance fapi; honest fallback if geo-blocked."""
+    """Open interest — CoinGecko exchange-level (primary), Binance fapi (fallback).
+
+    CoinGecko gives aggregate OI per exchange in BTC. Binance fapi gives
+    per-symbol OI history but is geo-blocked in some regions.
+    """
+    now_ms = int(_time.time() * 1000)
+
+    # Primary: CoinGecko — exchange-level OI for major perp venues
+    async with _client() as c:
+        try:
+            r = await c.get(f"{COINGECKO}/derivatives/exchanges",
+                            params={"order": "open_interest_btc_desc", "per_page": "20", "page": "1"})
+            if r.status_code == 200:
+                rows = []
+                for ex in r.json():
+                    oi_btc = ex.get("open_interest_btc")
+                    if oi_btc and float(oi_btc) > 0:
+                        rows.append({
+                            "time": now_ms,
+                            "sum_open_interest": float(oi_btc),
+                            "sum_open_interest_value": None,
+                            "exchange": ex.get("name", "unknown"),
+                        })
+                if rows:
+                    return {"symbol": symbol.upper(), "period": "snapshot",
+                            "rows": rows[:limit], "source": "coingecko",
+                            "note": "exchange-level OI in BTC, current snapshot"}
+        except Exception as exc:
+            logger.debug("coingecko OI %s: %s", symbol, exc)
+
+    # Fallback: Binance fapi
     async with _client() as c:
         try:
             r = await c.get(f"{BINANCE_FAPI}/futures/data/openInterestHist",
@@ -135,4 +199,4 @@ async def get_open_interest_history(symbol: str = "BTCUSDT", period: str = "5m",
         except Exception as exc:
             logger.debug("fapi OI %s: %s", symbol, exc)
     return {"symbol": symbol.upper(), "period": period, "rows": [], "source": "unavailable",
-            "note": "fapi.binance.com geo-blocked in this region"}
+            "note": "all OI sources unreachable"}
