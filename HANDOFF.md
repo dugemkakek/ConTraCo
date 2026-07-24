@@ -1229,3 +1229,136 @@ curl http://localhost:3000/         # → HTTP 200
 ```
 6. **Create provider registry** with fallback chain (real → cache → mock) so the system still works during migration
 7. **Remove `apps/api/app/services/market_data/mock_provider.py`** only after all real providers cover the same methods
+
+---
+
+## §16. Aoi session — handoff for next agent (2026-07-24)
+
+### Repo state
+- **Branch:** `continue-v2-roadmap` (9 commits ahead of `main`)
+- **Remote:** `https://github.com/dugemkakek/ConTraCo.git`
+- **Working tree:** clean, all pushed
+- **Tests:** 107 passed, 0 failed. `tsc --noEmit` clean.
+- **133 files changed vs main**, +13,877 / -776 lines
+
+### What was done this session (§15 continuation)
+
+**1. Chart signal overlay (TradingViewChart.tsx)**
+- EMA(9/21) + RSI(14) crossover signals rendered as arrow markers on candles
+- Latest signal draws ENTRY/SL/TP1/TP2 price lines (dashed)
+- Toggle via "SIG" button on charting page header
+- Backend: `GET /api/v1/charting/signals?symbol=BTCUSDT&interval=1h`
+- PineScript export: `GET /api/v1/charting/pinescript`
+
+**2. Trenches page — chain selector + hide-stable**
+- Dropdown: all/ethereum/base/arbitrum/polygon/bsc/solana/optimism
+- "NO STABLE" toggle filters stable/stable pairs (USDT-USDC etc.)
+- Backend: `GET /api/v1/intel/trenches?chain=base&hide_stable=true`
+- Backend filters server-side in `apps/api/app/api/intel.py`
+
+**3. Watchlist — symbol search dropdown**
+- Debounced (300ms) search via `GET /api/v1/symbols/search?q=`
+- Dropdown shows symbol + exchange, click to add
+- Replaces old plain text input
+
+**4. Wallet analyzer page (`/wallet`)**
+- Multi-chain portfolio: ETH, Base, Arbitrum, Optimism, Polygon
+- Council scoring: whale/smart-money/diversified tags
+- Backend: `GET /api/v1/council/wallets/{address}/analyze`
+- Added to TopNav
+
+**5. Verbose logging off**
+- `apps/api/Dockerfile`: uvicorn `--log-level warning`
+- `apps/web/next.config.mjs`: `logging: { fetches: { fullUrl: false } }`
+- For local dev: run uvicorn with `--log-level warning` flag
+
+**6. Funding/OI geo-block bypass (critical fix)**
+- `fapi.binance.com` returns empty 200s from Indonesia (IP-based geo-block)
+- Bybit + OKX also geo-blocked from this IP
+- **Solution:** CoinGecko derivatives API as primary source
+  - Funding: `GET /api/v3/derivatives?include_tickers=unexpired` → 88 exchanges, real rates
+  - OI: `GET /api/v3/derivatives/exchanges` → 20 exchanges, OI in BTC
+- Binance fapi kept as fallback for non-blocked regions
+- Verified live: `source: "coingecko"`, real data, no fabrication
+- File: `apps/api/app/services/market_data/derivatives.py`
+
+### Architecture summary (for orientation)
+
+```
+apps/api/          FastAPI backend (:8001)
+  app/api/         28 route modules (derivatives, intel, dex_extended, etc.)
+  app/engine/      14-gate confluence, MTC, Kelly, CRO debate, backtest
+  app/services/    market_data/, onchain/, fundamentals/, arbitrage/
+
+apps/web/          Next.js 16 + Turbopack frontend (:3000)
+  app/             16 pages (charting, trenches, wallet, watchlist, etc.)
+  components/      chart/ (TradingViewChart, MultiChartGrid), terminal/
+  lib/api.ts       All API client functions + types
+```
+
+### Data sources (all free, no key)
+| Source | What | Geo-block? |
+|--------|------|-----------|
+| data-api.binance.vision | Klines/candles | No |
+| api.coingecko.com | Funding, OI, prices, trending | No |
+| api.dexscreener.com | DEX pairs, new pools | No |
+| blockchain.info | BTC whale movements | No |
+| data.sec.gov | SEC EDGAR filings | No |
+| fapi.binance.com | Funding history, OI history | YES (Indonesia) |
+| api.bybit.com | Derivatives | YES (Indonesia) |
+| okx.com | Derivatives | YES (Indonesia) |
+
+### Running the app
+```bash
+# API
+cd F:/Programs/confluence-trading-consultant/apps/api
+venv/Scripts/python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level warning
+
+# Web
+cd F:/Programs/confluence-trading-consultant/apps/web
+npm run dev
+
+# Verify
+curl http://localhost:8001/health   # → provider=binance
+curl http://localhost:3000/login    # → HTTP 200
+
+# Login
+# http://localhost:3000/login
+# admin@example.com / ChangeMe123!
+```
+
+### Known issues
+1. **Port 8000 zombie** — old process holds socket. Use :8001. After reboot, can reclaim :8000.
+2. **CoinGecko rate limit** — 429s on heavy use. Free tier ~10-30 calls/min. Add caching if needed.
+3. **F: drive slow** — Turbopack first-compile ~30-60s per route. Normal after warm.
+4. **Orderbook** — no working adapter (binance/bybit/kraken/okx all fail). Needs CCXT or direct WS.
+5. **Funding is snapshot only** — CoinGecko gives current rate, not history. Binance fapi has history but geo-blocked.
+6. **OI is exchange-level** — CoinGecko gives aggregate OI per exchange in BTC, not per-symbol.
+
+### Next session priorities
+1. **Visual QA** — open all 16 pages in browser, check rendering
+2. **Orderbook fix** — wire CCXT or direct Binance WS for real orderbook
+3. **Debate Chamber** — wire news sentiment into debate UI panel
+4. **SEC EDGAR panel** — add to Strategy Lab or Journal page
+5. **CoinGecko caching** — add 60s TTL cache to avoid 429s
+6. **Funding history** — explore alternative sources for time-series funding
+7. **Merge to main** — `continue-v2-roadmap` is 9 commits ahead, ready when QA passes
+
+### Files modified this session (15 files, +985/-73)
+```
+apps/api/Dockerfile                              — uvicorn --log-level warning
+apps/api/app/api/derivatives.py                  — NEW: funding/OI/heatmap/signals/arb/wallet API
+apps/api/app/api/intel.py                        — chain filter + hide_stable for trenches
+apps/api/app/main.py                             — register new routers
+apps/api/app/services/market_data/derivatives.py — CoinGecko primary, fapi fallback
+apps/api/app/services/market_data/signals.py     — NEW: EMA/RSI/ATR signal engine + PineScript
+apps/api/app/services/onchain/multi_chain_wallet.py — NEW: cross-chain wallet analyzer
+apps/web/app/charting/page.tsx                   — SIG toggle + derivatives heatmap
+apps/web/app/trenches/page.tsx                   — chain selector + hide-stable
+apps/web/app/wallet/page.tsx                     — NEW: wallet analyzer page
+apps/web/app/watchlist/page.tsx                  — search dropdown autocomplete
+apps/web/components/chart/TradingViewChart.tsx   — signal markers + TP/SL lines
+apps/web/components/terminal/TopNav.tsx          — /wallet nav entry
+apps/web/lib/api.ts                              — all new API client functions
+apps/web/next.config.mjs                         — fetch logging off
+```
