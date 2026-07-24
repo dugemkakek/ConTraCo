@@ -1362,3 +1362,91 @@ apps/web/components/terminal/TopNav.tsx          — /wallet nav entry
 apps/web/lib/api.ts                              — all new API client functions
 apps/web/next.config.mjs                         — fetch logging off
 ```
+
+## §17. Claude session — §16 roadmap complete, merge decision pending (2026-07-24)
+
+### Repo state
+- **Branch:** `continue-v2-roadmap` (16 commits ahead of `main`, **+0 pushed — no upstream configured**)
+- **Remote:** `https://github.com/dugemkakek/ConTraCo.git` (branch must be pushed with `-u` when merging)
+- **Tests:** 140 passed, 0 failed (was 107 at §16). `tsc --noEmit` clean.
+- **140 files changed vs main**, +15,240 / -776 lines
+
+### What was done this session (all 7 §16 priorities)
+
+**1. Visual QA (commit 32b54c6 is the handoff; QA done in-session, no code change)**
+- All 16 web pages + API endpoints verified live after login.
+
+**2. Orderbook fix (4f088ed)**
+- Wired Binance orderbook through the geo-fallback adapter; orderbook depth now returns real data where fapi is reachable and degrades cleanly elsewhere.
+
+**3. Debate Chamber news sentiment (2609831)**
+- VADER news sentiment wired into the CRO debate UI (`components/decision/DebateChamber.tsx` + `lib/api.ts`).
+
+**4. SEC EDGAR panel (ebd403d, 2892a9a)**
+- Corrected EDGAR financials selection + filings search; added SEC fundamentals panel to the Journal page.
+
+**5. CoinGecko 60s TTL cache (d33d321)**
+- New module `apps/api/app/services/market_data/cg_cache.py`: `cached_get(client, url, params, ttl=60)` — caches raw `httpx.Response`, HTTP 200 only, per-key asyncio.Lock single-flight, 512-entry cap with oldest-eviction, `time.monotonic()` expiry, `clear()` for tests.
+- Wired into: arbitrage scanner, onchain metrics, derivatives funding/OI, intel trenches, free_sources CoinGecko calls. User-Agent moved into AsyncClient constructor (cached_get doesn't forward per-request headers).
+- Measured: arbitrage scan cold 0.562s → warm 0.046s (12x), zero upstream CoinGecko hits when warm.
+- Known-issue §16#2 (429s) is now mitigated.
+
+**6. Funding history — Hyperliquid primary (5f5570e)**
+- Explored OKX + Bybit as Binance-fapi alternatives: **both geo-blocked from Indonesia** (HTTP 000 fast-fail). Known-issues table below updated.
+- **Hyperliquid works**: `POST https://api.hyperliquid.xyz/info` `{"type":"fundingHistory","coin":"BTC","startTime":<ms>}` → ascending hourly points `{coin, fundingRate, premium, time}` (numeric fields are strings). Free, no key, no geo-block.
+- `get_funding_history` refactored into a call-time source chain (fetchers resolved as module globals so tests can monkeypatch each source):
+  1. `_fetch_hyperliquid_history` — real hourly time series (single venue)
+  2. `_fetch_coingecko_funding_snapshot` — current multi-exchange snapshot
+  3. `_fetch_binance_funding` — real history where fapi is reachable
+  Empty rows from a reachable source fall through to the next; pure `_map_hl_funding` skips garbage entries and keeps most-recent `limit` rows.
+- Verified live from Indonesia: `source: "hyperliquid"`, 100 rows, 100 distinct hourly timestamps spanning ~99h.
+- Known-issue §16#5 (funding snapshot-only) is RESOLVED. 9 new tests in `tests/test_funding_history.py`.
+
+**7. Merge to main — PENDING USER DECISION**
+- Per instructions: options must be presented, NOT auto-merged. Branch finishing was offered at session end; nothing was merged or pushed.
+
+### Data sources (updated — replaces §16 table)
+| Source | What | Geo-block? |
+|--------|------|-----------|
+| data-api.binance.vision | Klines/candles | No |
+| api.coingecko.com | Funding snapshot, OI, prices, trending (60s cache) | No |
+| **api.hyperliquid.xyz** | **Funding hourly history (POST /info)** | **No** |
+| api.dexscreener.com | DEX pairs, new pools | No |
+| blockchain.info | BTC whale movements (slow ~23s) | No |
+| data.sec.gov | SEC EDGAR filings | No |
+| api.gopluslabs.io | Token honeypot/rug safety | No |
+| api.alternative.me | Fear & Greed | No |
+| fapi.binance.com | Funding/OI history | YES (Indonesia) |
+| api.bybit.com | Derivatives | YES (Indonesia) |
+| okx.com / www.okx.com | Derivatives | YES (Indonesia) |
+
+### Known issues (remaining)
+1. **Port 8000 zombie** — old process holds socket. Use :8001.
+2. ~~CoinGecko 429s~~ — mitigated by the 60s cache (§17#5); heavy cold-start bursts can still hit limits.
+3. **F: drive slow** — Turbopack first-compile ~30-60s per route.
+4. ~~Orderbook~~ — fixed (Binance geo-fallback adapter).
+5. ~~Funding snapshot-only~~ — fixed (Hyperliquid hourly history).
+6. **OI is exchange-level** — CoinGecko gives aggregate OI per exchange in BTC, not per-symbol history. Hyperliquid may have a per-symbol OI endpoint (`POST /info {"type":"openInterest"}`?) — worth exploring the same way funding was.
+7. **Whale movements slow** — blockchain.info rawblock ~23s; consider timeout or caching.
+
+### Next session priorities
+1. **MERGE DECISION** — user chooses: (a) merge commit `git checkout main && git merge --no-ff continue-v2-roadmap`, (b) squash-merge, or (c) rebase-then-ff; then `git push -u origin continue-v2-roadmap` and/or push main. Branch was never pushed — no upstream yet.
+2. **OI time series** — explore Hyperliquid/other for per-symbol OI history (mirror the funding approach).
+3. **Whale-movements latency** — cache or lower timeout on blockchain.info.
+
+### Files changed this session (19 files, +1288/-58)
+```
+HANDOFF.md                                              — §16 + §17 handoffs
+apps/api/app/api/derivatives.py                         — cached_get for CG search/tickers
+apps/api/app/api/intel.py                               — cached_get for CG trending
+apps/api/app/services/arbitrage/scanner.py              — cached_get for CG tickers
+apps/api/app/services/market_data/cg_cache.py           — NEW: 60s TTL single-flight cache
+apps/api/app/services/market_data/derivatives.py        — Hyperliquid primary funding chain
+apps/api/app/services/market_data/free_sources.py       — cached_get + UA in client ctor
+apps/api/app/services/onchain/__init__.py               — cached_get for onchain metrics
+apps/api/tests/test_cg_cache.py                         — NEW: 7 cache tests
+apps/api/tests/test_funding_history.py                  — NEW: 9 funding source tests
+apps/web/components/decision/DebateChamber.tsx          — news sentiment wiring
+apps/web/lib/api.ts                                     — sentiment/SEC client fns
++ orderbook adapter, SEC EDGAR panel files (see commits 4f088ed, ebd403d, 2892a9a)
+```
