@@ -15,6 +15,7 @@ const NAV = [
   { href: "/journal", label: "Journal" },
   { href: "/arbitrage", label: "Arbitrage" },
   { href: "/watchlist", label: "Watchlist" },
+  { href: "/wallet", label: "Wallet" },
   { href: "/settings", label: "Settings" },
 ];
 

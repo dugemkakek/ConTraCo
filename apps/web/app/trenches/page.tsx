@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Flame, TrendingUp, RefreshCw, ExternalLink, Shield } from "lucide-react";
+import { Flame, TrendingUp, RefreshCw, ExternalLink, Shield, Filter } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { getTrenches, type TrenchPair, type TrendingCoin } from "@/lib/api";
 
@@ -94,17 +94,21 @@ function TrendingPanel({ coins }: { coins: TrendingCoin[] }) {
   );
 }
 
+const CHAINS = ["all", "ethereum", "base", "arbitrum", "polygon", "bsc", "solana", "optimism"] as const;
+
 export default function TrenchesPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [chain, setChain] = useState<string>("all");
+  const [hideStable, setHideStable] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
   }, [user, loading, router]);
 
   const { data, isFetching, refetch } = useQuery({
-    queryKey: ["trenches"],
-    queryFn: () => getTrenches(20),
+    queryKey: ["trenches", chain, hideStable],
+    queryFn: () => getTrenches(20, chain, hideStable),
     refetchInterval: 60_000,
     enabled: !!user,
   });
@@ -123,6 +127,29 @@ export default function TrenchesPage() {
         <Flame className="w-3.5 h-3.5 text-info" />
         <span className="terminal-label">Trenches — Opportunity Scanner</span>
         <span className="text-[9px] font-mono text-muted">VOLUME · TRENDING · NEW PAIRS</span>
+        <div className="flex items-center gap-1 ml-2">
+          <Filter className="w-3 h-3 text-muted" />
+          <select
+            value={chain}
+            onChange={(e) => setChain(e.target.value)}
+            className="h-6 bg-bg border border-border px-1 text-[9px] font-mono text-primary focus:border-info focus:outline-none"
+          >
+            {CHAINS.map((c) => (
+              <option key={c} value={c}>{c === "all" ? "ALL CHAINS" : c.toUpperCase()}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setHideStable((v) => !v)}
+            className={`h-6 px-2 text-[9px] font-mono border transition-colors ${
+              hideStable
+                ? "border-info text-info bg-info/10"
+                : "border-border text-muted hover:text-primary"
+            }`}
+            title="Hide stable/stable pairs"
+          >
+            NO STABLE
+          </button>
+        </div>
         <button
           onClick={() => refetch()}
           className="ml-auto h-7 px-3 text-[10px] border border-info text-info hover:bg-info/10 font-mono flex items-center gap-2"

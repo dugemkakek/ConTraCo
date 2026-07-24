@@ -728,8 +728,8 @@ export async function getTokenSafety(address: string, chainId = 1): Promise<Toke
   return request(`/api/v1/intel/token-safety?address=${encodeURIComponent(address)}&chain_id=${chainId}`);
 }
 
-export async function getTrenches(limit = 20): Promise<{ pairs: TrenchPair[]; trending_coins: TrendingCoin[] }> {
-  return request(`/api/v1/intel/trenches?limit=${limit}`);
+export async function getTrenches(limit = 20, chain = "all", hideStable = true): Promise<{ pairs: TrenchPair[]; trending_coins: TrendingCoin[] }> {
+  return request(`/api/v1/intel/trenches?limit=${limit}&chain=${chain}&hide_stable=${hideStable}`);
 }
 
 export async function getWhaleMovements(minBtc = 100, limit = 20): Promise<{ movements: WhaleMovement[]; count: number }> {
@@ -738,4 +738,68 @@ export async function getWhaleMovements(minBtc = 100, limit = 20): Promise<{ mov
 
 export async function getIntelSentiment(): Promise<{ current: Record<string, unknown> | null; history: Record<string, unknown>[] }> {
   return request("/api/v1/intel/sentiment");
+}
+
+// ── Derivatives / charting signals (Binance vision — works in geo-blocked regions) ──
+
+export type HeatmapBand = {
+  price: number;
+  long_score: number;
+  short_score: number;
+  total_score: number;
+};
+
+export type TradeSignal = {
+  time: number;
+  side: "buy" | "sell";
+  entry: number;
+  stop_loss: number;
+  take_profit_1: number;
+  take_profit_2: number;
+  ema_fast: number;
+  ema_slow: number;
+  rsi: number;
+};
+
+export async function getDerivHeatmap(symbol: string): Promise<{ bands: HeatmapBand[]; current_price: number | null; source: string }> {
+  const pair = symbol.replace("/", "").toUpperCase();
+  return request(`/api/v1/derivatives/liquidation-heatmap?symbol=${pair}`);
+}
+
+export async function getDerivFunding(symbol: string): Promise<{ rows: { time: number; funding_rate: number }[]; source: string; note?: string }> {
+  const pair = symbol.replace("/", "").toUpperCase();
+  return request(`/api/v1/derivatives/funding?symbol=${pair}`);
+}
+
+export async function getDerivOI(symbol: string): Promise<{ rows: { time: number; sum_open_interest: number; sum_open_interest_value: number }[]; source: string; note?: string }> {
+  const pair = symbol.replace("/", "").toUpperCase();
+  return request(`/api/v1/derivatives/open-interest?symbol=${pair}`);
+}
+
+export async function getChartSignals(symbol: string, interval: string): Promise<{ signals: TradeSignal[]; candles: Record<string, unknown>[]; source: string }> {
+  const pair = symbol.replace("/", "").toUpperCase();
+  return request(`/api/v1/charting/signals?symbol=${pair}&interval=${interval}`);
+}
+
+export async function getPinescript(): Promise<{ name: string; script: string }> {
+  return request("/api/v1/charting/pinescript");
+}
+
+export async function getArbScan(symbol: string): Promise<{ markets: Record<string, unknown>[]; opportunities: Record<string, unknown>[]; source: string }> {
+  const base = symbol.replace("/USDT", "").replace("/usdt", "");
+  return request(`/api/v1/arbitrage/scan?symbol=${encodeURIComponent(base)}`);
+}
+
+// ── DEX sniping / tranches / wallet ──
+
+export async function getSnipeTrending(network = "ethereum", limit = 10): Promise<{ network: string; pools: Record<string, unknown>[] }> {
+  return request(`/api/v1/dex/snipe/trending?network=${network}&limit=${limit}`);
+}
+
+export async function getTranches(network = "ethereum", hideStable = true): Promise<Record<string, unknown>> {
+  return request(`/api/v1/dex/tranches/analyze?network=${network}&hide_stable_pairs=${hideStable}`);
+}
+
+export async function analyzeWallet(address: string, chains = "eth,base,arbitrum,optimism,polygon"): Promise<Record<string, unknown>> {
+  return request(`/api/v1/council/wallets/${address}/analyze?chains=${chains}`);
 }
