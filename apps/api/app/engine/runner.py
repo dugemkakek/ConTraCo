@@ -244,7 +244,18 @@ async def run_analysis(
              "confidence": o.confidence, "reason": o.reason}
             for o in opinions
         ]
-        debate = run_debate(verdicts, conf_result.scenario, council_op_dicts)
+        # The fundamental_context gate already fetched VADER-scored news
+        # sentiment — reuse it in the debate instead of hitting the network
+        # a second time.
+        news_ev = next(
+            (ge.evidence.get("news") for ge in gate_evals
+             if ge.name == "fundamental_context"),
+            None,
+        )
+        debate = run_debate(
+            verdicts, conf_result.scenario, council_op_dicts,
+            news_sentiment=news_ev,
+        )
         conf_dict["debate"] = debate.to_dict()
 
         # 5) decision

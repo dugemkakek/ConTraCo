@@ -11,6 +11,7 @@ const LABELS: Record<string, string> = {
   skeptical_reviewer: "Skeptic",
   trade_planner: "Planner",
   synthesis_reviewer: "Synthesis",
+  news_sentiment: "News Sentiment",
 };
 
 function opinionCamp(opinions: OpinionOut[], direction: "LONG" | "SHORT" | "WAIT"): DebateCamp {
@@ -59,6 +60,11 @@ export function DebateChamber({ opinions, decision }: Props) {
   const bear = debate?.bear ?? opinionCamp(opinions, "SHORT");
   const neutral = debate?.neutral ?? opinionCamp(opinions, "WAIT");
   const vetoes = decision?.vetoes ?? [];
+  const news = debate?.news_sentiment ?? null;
+  const newsTone: "bull" | "bear" | "neutral" =
+    news?.sentiment_label === "bullish" ? "bull"
+    : news?.sentiment_label === "bearish" ? "bear"
+    : "neutral";
 
   return (
     <div className="debate-chamber">
@@ -76,6 +82,33 @@ export function DebateChamber({ opinions, decision }: Props) {
         <Camp title="BEAR CASE" camp={bear} tone="bear" />
       </div>
       <Camp title="NEUTRAL / ABSTAIN" camp={neutral} tone="neutral" />
+      {news && (
+        <section className={`debate-camp debate-${newsTone}`}>
+          <header>
+            <span className="debate-signal" />
+            <strong>NEWS SENTIMENT</strong>
+            <span>{news.total_articles}</span>
+          </header>
+          <div className="debate-stack">
+            <article>
+              <div>
+                <strong>{(news.sentiment_label ?? "neutral").toUpperCase()}</strong>
+                <span>{news.mean_compound != null ? news.mean_compound.toFixed(2) : "—"}</span>
+              </div>
+              <p>
+                {news.bullish} bullish / {news.bearish} bearish
+                {news.macro_label && news.macro_label !== "neutral"
+                  ? ` · macro ${news.macro_label}`
+                  : ""}
+              </p>
+              {news.top_headlines.slice(0, 3).map((headline, index) => (
+                <p key={index}>&ldquo;{headline}&rdquo;</p>
+              ))}
+              <small>VADER / RSS — INFORMATIONAL</small>
+            </article>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
