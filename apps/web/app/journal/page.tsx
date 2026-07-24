@@ -9,7 +9,10 @@ import {
   deleteJournalEntry,
   journalSummary,
   listJournal,
+  secContext,
   type JournalEntry,
+  type SecCompanyContext,
+  type SecFinancialPoint,
 } from "@/lib/api";
 
 export default function JournalPage() {
@@ -108,6 +111,8 @@ export default function JournalPage() {
           <Stat label="Total" value={summary.total_entries} />
         </div>
       )}
+
+      <SecFundamentalsPanel />
 
       <form
         onSubmit={onCreate}
@@ -281,4 +286,134 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
+}
+
+function SecFundamentalsPanel() {
+  const [ticker, setTicker] = useState("AAPL");
+  const [data, setData] = useState<SecCompanyContext | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onLookup(e: React.FormEvent) {
+    e.preventDefault();
+    const t = ticker.trim().toUpperCase();
+    if (!t) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await secContext(t));
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "lookup failed");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filings = data?.recent_filings ?? [];
+
+  return (
+    <section className="rounded-md border border-border bg-panel p-3 flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+          SEC Fundamentals
+        </h2>
+        <span className="text-[10px] text-muted">
+          source: sec_edgar · US-listed companies only
+        </span>
+      </div>
+      <form onSubmit={onLookup} className="flex gap-2">
+        <input
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value)}
+          placeholder="Ticker (e.g. AAPL, MSFT)"
+          className="w-48 bg-bg border border-border rounded px-2 py-1 text-xs text-primary"
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="px-3 py-1 rounded border border-info text-info text-xs hover:bg-info/20 disabled:opacity-50"
+        >
+          {loading ? "Looking up…" : "Lookup"}
+        </button>
+      </form>
+      {error && <p className="text-xs text-bearish">{error}</p>}
+      {data && !data.available && (
+        <p className="text-xs text-muted">
+          {data.ticker}: {data.reason ?? "not available on SEC EDGAR"}
+        </p>
+      )}
+      {data?.available && (
+        <>
+          <div>
+            <div className="text-sm text-primary">{data.company_name}</div>
+            <div className="text-[10px] text-muted font-mono">
+              {data.ticker} · CIK {data.cik}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <FinCell label="Revenue" point={data.financials?.revenue ?? null} kind="usd" />
+            <FinCell label="Net income" point={data.financials?.net_income ?? null} kind="usd" />
+            <FinCell label="EPS (diluted)" point={data.financials?.eps_diluted ?? null} kind="eps" />
+            <FinCell label="Total assets" point={data.financials?.total_assets ?? null} kind="usd" />
+          </div>
+          {filings.length > 0 ? (
+            <ul className="flex flex-col gap-1 text-xs">
+              {filings.slice(0, 6).map((f, i) => (
+                <li key={i} className="flex gap-2 items-baseline">
+                  <span className="font-mono text-info shrink-0">{f.form}</span>
+                  <span className="text-muted shrink-0">
+                    {f.filing_date ? f.filing_date.slice(0, 10) : "—"}
+                  </span>
+                  <a
+                    href={f.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-primary/80 underline decoration-border hover:text-primary"
+                  >
+                    {f.title || "filing"}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted">No recent 10-K/10-Q filings found.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function FinCell({
+  label,
+  point,
+  kind,
+}: {
+  label: string;
+  point: SecFinancialPoint | null;
+  kind: "usd" | "eps";
+}) {
+  const value =
+    point?.value == null
+      ? "—"
+      : kind === "eps"
+      ? `$${point.value.toFixed(2)}`
+      : formatUsd(point.value);
+  const sub = [point?.period, point?.form].filter(Boolean).join(" · ");
+  return (
+    <div className="rounded border border-border bg-bg p-2">
+      <div className="text-muted">{label}</div>
+      <div className="font-mono text-primary">{value}</div>
+      <div className="text-[10px] text-muted">{sub || " "}</div>
+    </div>
+  );
+}
+
+function formatUsd(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return `$${(v / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(v / 1e6).toFixed(2)}M`;
+  return `$${v.toFixed(2)}`;
 }

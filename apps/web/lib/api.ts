@@ -422,6 +422,40 @@ export async function journalSummary(): Promise<{
   return request("/api/v1/journal/summary");
 }
 
+export type SecFinancialPoint = {
+  value: number | null;
+  period: string | null;
+  form: string | null;
+  frame: string | null;
+};
+
+export type SecFiling = {
+  form: string;
+  title: string;
+  filing_date: string;
+  url: string;
+};
+
+export type SecCompanyContext = {
+  ticker: string;
+  available: boolean;
+  reason?: string;
+  company_name?: string;
+  cik?: string;
+  financials?: {
+    revenue: SecFinancialPoint | null;
+    net_income: SecFinancialPoint | null;
+    eps_diluted: SecFinancialPoint | null;
+    total_assets: SecFinancialPoint | null;
+  };
+  recent_filings?: SecFiling[];
+  source: string;
+};
+
+export async function secContext(ticker: string): Promise<SecCompanyContext> {
+  return request(`/api/v1/sec/context?ticker=${encodeURIComponent(ticker)}`);
+}
+
 export async function getTradesConfig(): Promise<TradesConfig> {
   return request("/api/v1/trades/config");
 }
