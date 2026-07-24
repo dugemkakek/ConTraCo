@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Star, Plus, X, RefreshCw } from "lucide-react";
+import { Star, Plus, X, RefreshCw, Search } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
-import { getMarketOverview, type MarketOverview } from "@/lib/api";
+import { getMarketOverview, searchSymbols, type MarketOverview, type SymbolSearchResult } from "@/lib/api";
 
 const STORAGE_KEY = "contraco-watchlist";
 
@@ -26,6 +26,10 @@ export default function WatchlistPage() {
   const router = useRouter();
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [input, setInput] = useState("");
+  const [results, setResults] = useState<SymbolSearchResult[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -33,6 +37,29 @@ export default function WatchlistPage() {
 
   useEffect(() => {
     setWatchlist(loadWatchlist());
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const doSearch = useCallback((q: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (q.trim().length < 2) { setResults([]); setShowDropdown(false); return; }
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await searchSymbols(q.trim());
+        setResults(res.slice(0, 8));
+        setShowDropdown(true);
+      } catch { setResults([]); }
+    }, 300);
   }, []);
 
   const addSymbol = useCallback((sym: string) => {
@@ -81,15 +108,37 @@ export default function WatchlistPage() {
         <span className="terminal-label">Watchlist</span>
         <span className="text-[9px] font-mono text-muted">{watchlist.length} SYMBOLS</span>
         <div className="ml-auto flex items-center gap-2">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addSymbol(input)}
-            placeholder="BTC/USDT"
-            className="w-28 bg-bg border border-border px-2 py-1 text-[10px] font-mono text-primary placeholder:text-muted/50 focus:border-info focus:outline-none"
-          />
+          <div className="relative" ref={dropdownRef}>
+            <div className="flex items-center">
+              <Search className="w-3 h-3 text-muted absolute left-2 pointer-events-none" />
+              <input
+                value={input}
+                onChange={(e) => { setInput(e.target.value); doSearch(e.target.value); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { addSymbol(input); setShowDropdown(false); }
+                  if (e.key === "Escape") setShowDropdown(false);
+                }}
+                placeholder="Search symbol…"
+                className="w-40 bg-bg border border-border pl-6 pr-2 py-1 text-[10px] font-mono text-primary placeholder:text-muted/50 focus:border-info focus:outline-none"
+              />
+            </div>
+            {showDropdown && results.length > 0 && (
+              <div className="absolute top-full left-0 mt-1 w-56 border border-border bg-panel z-50 max-h-48 overflow-y-auto">
+                {results.map((r, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { addSymbol(r.symbol); setShowDropdown(false); }}
+                    className="w-full text-left px-3 py-1.5 text-[10px] font-mono hover:bg-info/10 flex items-center justify-between"
+                  >
+                    <span className="text-primary font-semibold">{r.symbol}</span>
+                    <span className="text-muted text-[8px]">{r.exchange}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
-            onClick={() => addSymbol(input)}
+            onClick={() => { addSymbol(input); setShowDropdown(false); }}
             className="h-7 px-2 text-[10px] border border-info text-info hover:bg-info/10 font-mono flex items-center gap-1"
           >
             <Plus className="w-3 h-3" /> ADD

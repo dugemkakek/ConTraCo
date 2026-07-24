@@ -6,10 +6,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Droplets, Flame, BookOpen, LayoutGrid, Square } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import {
-  getFundingOI,
-  getLiquidityHeatmap,
-  type FundingOI,
-  type LiquidityHeatmap,
+  getDerivHeatmap,
+  getDerivFunding,
+  getDerivOI,
+  type HeatmapBand,
 } from "@/lib/api";
 import { TradingViewChart } from "@/components/chart/TradingViewChart";
 import { MultiChartGrid } from "@/components/chart/MultiChartGrid";
@@ -20,56 +20,54 @@ import { OrderBook } from "@/components/terminal/OrderBook";
 
 function LiquidityPanel({ symbol }: { symbol: string }) {
   const { data } = useQuery({
-    queryKey: ["liquidity-heatmap", symbol],
-    queryFn: () => getLiquidityHeatmap(symbol),
+    queryKey: ["deriv-heatmap", symbol],
+    queryFn: () => getDerivHeatmap(symbol),
     refetchInterval: 60_000,
   });
 
-  const levels = data?.levels ?? [];
-  const maxVol = Math.max(...levels.map((l) => l.volume_usd), 1);
+  const bands = (data?.bands ?? []).filter((b) => b.total_score > 0);
+  const maxScore = Math.max(...bands.map((b) => b.total_score), 1);
+  // Show the 12 highest-intensity clusters, sorted by price desc
+  const top = bands.slice().sort((a, b) => b.total_score - a.total_score).slice(0, 12).sort((a, b) => b.price - a.price);
 
   return (
     <section className="border border-border bg-panel">
       <header className="flex items-center gap-2 px-3 py-2 border-b border-border">
         <Droplets className="w-3.5 h-3.5 text-info" />
         <span className="terminal-label">Liquidation Heatmap</span>
-        {data?.source === "mock" && (
-          <span className="ml-auto text-[8px] font-mono text-muted">SIM</span>
+        {data?.current_price != null && (
+          <span className="ml-auto text-[8px] font-mono text-muted">SPOT ${data.current_price.toLocaleString()}</span>
         )}
       </header>
       <div className="p-2 flex flex-col gap-1.5">
-        {levels.length === 0 && (
-          <p className="text-[10px] text-muted italic px-1 py-2">No cluster data</p>
+        {top.length === 0 && (
+          <p className="text-[10px] text-muted italic px-1 py-2">No cluster data for this symbol.</p>
         )}
-        {levels
-          .slice()
-          .sort((a, b) => b.price - a.price)
-          .map((l, i) => {
-            const isShort = l.type === "short_liquidation";
-            return (
-              <div key={i} className="group relative">
-                <div className="flex items-center justify-between text-[9px] font-mono px-1 mb-0.5">
-                  <span className={isShort ? "text-bullish" : "text-bearish"}>
-                    ${l.price.toLocaleString()}
-                  </span>
-                  <span className="text-muted">
-                    {((l.volume_usd ?? 0) / 1e6).toFixed(0)}M · {Math.round((l.intensity ?? 0) * 100)}%
-                  </span>
-                </div>
-                <div className="h-2 bg-bg overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-500 group-hover:brightness-150 ${
-                      isShort ? "bg-bullish/60" : "bg-bearish/60"
-                    }`}
-                    style={{ width: `${(l.volume_usd / maxVol) * 100}%` }}
-                  />
-                </div>
+        {top.map((b, i) => {
+          const shortDominant = b.short_score >= b.long_score;
+          return (
+            <div key={i} className="group relative">
+              <div className="flex items-center justify-between text-[9px] font-mono px-1 mb-0.5">
+                <span className={shortDominant ? "text-bullish" : "text-bearish"}>
+                  ${b.price.toLocaleString()}
+                </span>
+                <span className="text-muted">
+                  L {b.long_score.toFixed(0)} · S {b.short_score.toFixed(0)}
+                </span>
               </div>
-            );
-          })}
+              <div className="h-2 bg-bg overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 group-hover:brightness-150 ${
+                    shortDominant ? "bg-bullish/60" : "bg-bearish/60"
+                  }`}
+                  style={{ width: `${(b.total_score / maxScore) * 100}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
         <p className="text-[8px] font-mono text-muted px-1 pt-1">
-          <span className="text-bullish">■</span> SHORT LIQ ABOVE ·{" "}
-          <span className="text-bearish">■</span> LONG LIQ BELOW
+          <span className="text-bullish">■</span> SHORT LIQ · <span className="text-bearish">■</span> LONG LIQ · ESTIMATED FROM CANDLE STRUCTURE
         </p>
       </div>
     </section>
@@ -77,14 +75,22 @@ function LiquidityPanel({ symbol }: { symbol: string }) {
 }
 
 function FundingOIPanel({ symbol }: { symbol: string }) {
-  const { data } = useQuery({
-    queryKey: ["funding-oi", symbol],
-    queryFn: () => getFundingOI(symbol),
+  const fundingQ = useQuery({
+    queryKey: ["deriv-funding", symbol],
+    queryFn: () => getDerivFunding(symbol),
+    refetchInterval: 60_000,
+  });
+  const oiQ = useQuery({
+    queryKey: ["deriv-oi", symbol],
+    queryFn: () => getDerivOI(symbol),
     refetchInterval: 60_000,
   });
 
-  const f = data?.funding;
-  const oi = data?.open_interest;
+  const fRows = fundingQ.data?.rows ?? [];
+  const oiRows = oiQ.data?.rows ?? [];
+  const latestF = fRows[fRows.length - 1];
+  const latestOI = oiRows[oiRows.length - 1];
+  const geoBlocked = fundingQ.data?.source === "unavailable";
 
   return (
     <section className="border border-border bg-panel">
@@ -92,16 +98,21 @@ function FundingOIPanel({ symbol }: { symbol: string }) {
         <Flame className="w-3.5 h-3.5 text-info" />
         <span className="terminal-label">Funding / Open Interest</span>
       </header>
-      <div className="grid grid-cols-2 gap-px bg-border">
-        <Cell label="FUNDING NOW" value={f?.current != null ? `${(f.current * 100).toFixed(4)}%` : "—"} tone={f?.current != null && f.current >= 0 ? "bull" : "bear"} />
-        <Cell label="PREDICTED" value={f?.predicted != null ? `${(f.predicted * 100).toFixed(4)}%` : "—"} tone={f?.predicted != null && f.predicted >= 0 ? "bull" : "bear"} />
-        <Cell label="ANNUALIZED" value={f?.annualized != null ? `${f.annualized.toFixed(1)}%` : "—"} tone={f?.annualized != null && f.annualized >= 0 ? "bull" : "bear"} />
-        <Cell label="TREND" value={f?.trend?.toUpperCase() ?? "—"} />
-        <Cell label="OI" value={oi?.current != null ? `$${(oi.current / 1e9).toFixed(2)}B` : "—"} />
-        <Cell label="OI 24H" value={oi?.change_24h_pct != null ? `${oi.change_24h_pct >= 0 ? "+" : ""}${oi.change_24h_pct.toFixed(1)}%` : "—"} tone={oi?.change_24h_pct != null && oi.change_24h_pct >= 0 ? "bull" : "bear"} />
-        <Cell label="L/S RATIO" value={oi?.long_short_ratio != null ? oi.long_short_ratio.toFixed(2) : "—"} tone={oi?.long_short_ratio != null && oi.long_short_ratio >= 1 ? "bull" : "bear"} />
-        <Cell label="SOURCE" value={data?.source?.toUpperCase() ?? "—"} />
-      </div>
+      {geoBlocked && oiRows.length === 0 ? (
+        <p className="text-[9px] text-muted italic px-3 py-3 leading-relaxed">
+          Perp funding & OI feed (fapi.binance.com) is geo-blocked in this region.
+          Spot data, liquidation heatmap, and signals still work via Binance vision.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-px bg-border">
+          <Cell label="FUNDING NOW" value={latestF ? `${(latestF.funding_rate * 100).toFixed(4)}%` : "—"} tone={latestF && latestF.funding_rate >= 0 ? "bull" : "bear"} />
+          <Cell label="FUNDING PTS" value={String(fRows.length)} />
+          <Cell label="OI (LATEST)" value={latestOI ? `${latestOI.sum_open_interest.toFixed(0)}` : "—"} />
+          <Cell label="OI VALUE" value={latestOI?.sum_open_interest_value != null ? `$${(latestOI.sum_open_interest_value / 1e9).toFixed(2)}B` : "—"} />
+          <Cell label="OI PTS" value={String(oiRows.length)} />
+          <Cell label="SOURCE" value={(fundingQ.data?.source ?? "—").toUpperCase()} />
+        </div>
+      )}
     </section>
   );
 }
@@ -128,6 +139,7 @@ export default function ChartingPage() {
   const [venue, setVenue] = useState("binance");
   const [timeframe, setTimeframe] = useState("1h");
   const [view, setView] = useState<"single" | "grid">("single");
+  const [showSignals, setShowSignals] = useState(true);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -151,6 +163,17 @@ export default function ChartingPage() {
             <SymbolSearch onSelect={(sym, exch) => { setSymbol(sym); if (exch) setVenue(exch); }} />
             <VenueSelector value={venue} onChange={setVenue} />
             <TimeframeSelector value={timeframe} onChange={setTimeframe} />
+            <button
+              onClick={() => setShowSignals((v) => !v)}
+              className={`h-6 px-2 text-[9px] font-mono border transition-colors ${
+                showSignals
+                  ? "border-info text-info bg-info/10"
+                  : "border-border text-muted hover:text-primary"
+              }`}
+              title="Toggle EMA/RSI trade signals"
+            >
+              SIG
+            </button>
             <span className="ml-auto font-mono text-[9px] text-muted">
               {symbol} · {venue.toUpperCase()} · {timeframe.toUpperCase()}
             </span>
@@ -190,7 +213,7 @@ export default function ChartingPage() {
         <div className="flex-1 min-h-0 flex">
           {/* Chart — 72% */}
           <div className="flex-[72] min-w-0 relative">
-            <TradingViewChart symbol={symbol} venue={venue} interval={timeframe} />
+            <TradingViewChart symbol={symbol} venue={venue} interval={timeframe} showSignals={showSignals} />
           </div>
 
           {/* Right rail — 28% */}

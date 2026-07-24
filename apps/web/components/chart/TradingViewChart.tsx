@@ -10,13 +10,14 @@ import {
   LineStyle,
 } from "lightweight-charts";
 import type { Candle } from "@/lib/api";
-import { request } from "@/lib/api";
+import { request, getChartSignals, type TradeSignal } from "@/lib/api";
 
 type Props = {
   symbol: string;
   venue: string;
   interval: string;
   height?: number;
+  showSignals?: boolean;
 };
 
 const TF_MAP: Record<string, string> = {
@@ -48,6 +49,7 @@ export function TradingViewChart({
   venue,
   interval,
   height = 520,
+  showSignals = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -59,6 +61,7 @@ export function TradingViewChart({
     ema200: ISeriesApi<"Line">;
   } | null>(null);
   const lastKeyRef = useRef<string | null>(null);
+  const priceLinesRef = useRef<ReturnType<ISeriesApi<"Candlestick">["createPriceLine"]>[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -178,6 +181,67 @@ export function TradingViewChart({
 
     return () => { cancelled = true; };
   }, [symbol, interval, venue]);
+
+  // Signal overlay — markers + TP/SL price lines for the latest signal.
+  useEffect(() => {
+    if (!showSignals || !seriesRef.current) return;
+    const series = seriesRef.current;
+    const apiPair = symbolToApiPair(symbol);
+    const tf = TF_MAP[interval] || "1h";
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await getChartSignals(apiPair, tf);
+        if (cancelled || !seriesRef.current) return;
+        const sigs = res.signals ?? [];
+
+        // Markers on every signal bar
+        const markers = sigs.map((s) => ({
+          time: s.time as any,
+          position: (s.side === "buy" ? "belowBar" : "aboveBar") as "belowBar" | "aboveBar",
+          color: s.side === "buy" ? "#10B981" : "#F43F5E",
+          shape: (s.side === "buy" ? "arrowUp" : "arrowDown") as "arrowUp" | "arrowDown",
+          text: `${s.side.toUpperCase()} ${s.entry}`,
+        }));
+        series.candle.setMarkers(markers);
+
+        // Price lines for the most recent signal
+        priceLinesRef.current.forEach((pl) => {
+          try { series.candle.removePriceLine(pl); } catch { /* noop */ }
+        });
+        priceLinesRef.current = [];
+
+        const latest = sigs[sigs.length - 1];
+        if (latest) {
+          const addLine = (price: number, color: string, title: string, style: number) => {
+            const pl = series.candle.createPriceLine({
+              price, color, lineWidth: 1, lineStyle: style as any,
+              axisLabelVisible: true, title,
+            });
+            priceLinesRef.current.push(pl);
+          };
+          addLine(latest.entry, "#8B9BB4", "ENTRY", 0);
+          addLine(latest.stop_loss, "#F43F5E", "SL", 2);
+          addLine(latest.take_profit_1, "#10B981", "TP1", 2);
+          addLine(latest.take_profit_2, "#10B981", "TP2", 2);
+        }
+      } catch {
+        // Signals are best-effort; chart still works without them.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (seriesRef.current) {
+        seriesRef.current.candle.setMarkers([]);
+        priceLinesRef.current.forEach((pl) => {
+          try { seriesRef.current?.candle.removePriceLine(pl); } catch { /* noop */ }
+        });
+        priceLinesRef.current = [];
+      }
+    };
+  }, [showSignals, symbol, interval]);
 
   return (
     <div className="relative w-full h-full">

@@ -140,11 +140,13 @@ async def token_safety(
 async def trenches(
     _user: Annotated[User, Depends(get_current_user)],
     chain: str = Query("all"),
+    hide_stable: bool = Query(True),
     sort: str = Query("volume"),
     limit: int = Query(20, ge=1, le=50),
 ):
     """Trending/new pairs from DEX Screener + CoinGecko trending coins."""
     out: dict[str, Any] = {"pairs": [], "trending_coins": [], "source": "dexscreener+coingecko"}
+    _STABLES = {"USDT", "USDC", "DAI", "BUSD", "TUSD", "FDUSD", "USDD", "PYUSD", "GUSD", "FRAX"}
 
     async with _client() as c:
         # DEX Screener — boosted / latest tokens
@@ -215,6 +217,14 @@ async def trenches(
                     })
         except Exception as exc:
             logger.debug("coingecko trending: %s", exc)
+
+    # Apply chain + stable filters
+    if chain != "all":
+        out["pairs"] = [p for p in out["pairs"] if p.get("chain") == chain]
+    if hide_stable:
+        out["pairs"] = [p for p in out["pairs"]
+                        if not (p.get("base_token", "").upper() in _STABLES
+                                and p.get("quote_token", "").upper() in _STABLES)]
 
     return out
 
