@@ -1450,3 +1450,64 @@ apps/web/components/decision/DebateChamber.tsx          — news sentiment wirin
 apps/web/lib/api.ts                                     — sentiment/SEC client fns
 + orderbook adapter, SEC EDGAR panel files (see commits 4f088ed, ebd403d, 2892a9a)
 ```
+
+---
+
+## §18 — Claude session — branch pushed, PR #3 open but CONFLICTING with diverged main (2026-07-24)
+
+Supersedes §17's "Next session priorities" (the "branch never pushed / no upstream" wording there is stale).
+
+### State right now
+
+- **Branch `continue-v2-roadmap` is pushed** with `-u origin` (17 commits ahead of the old main). Remote: `https://github.com/dugemkakek/ConTraCo.git`.
+- **PR #3 is OPEN**: `https://github.com/dugemkakek/ConTraCo/pull/3` — created via the GitHub web UI (title "Continue v2 roadmap", **body empty**). GitHub marks it **CONFLICTING / DIRTY** (see below).
+- **Local working tree:** this §18 is committed locally but **NOT pushed** — the branch is 1 commit ahead of `origin/continue-v2-roadmap` (docs-only commit; safe to push or drop).
+- Services were left running in the background: API on :8001 (task bglhtpuvw, PID 10372), web on :3000 (task b1efl3pi0). Kill/restart as needed; API has no `--reload`, so restart after backend edits.
+
+### Why PR #3 conflicts — main diverged while the branch was being built
+
+Merge-base is `bcdc981`. `origin/main` gained **8 commits the branch doesn't have**:
+
+```
+b9e868b fix: correct score range and direction bugs in gates 7, 8, 9, 14   ← user, on main
+47a1c44 Delete .github/workflows directory
+7711391 Delete .commandcode/taste directory
+8929c0d Delete CLAUDE.md
+eb3adf5 Delete HANDOFF.md
+19ae2a0 Delete Makefile
+f6ad48c Delete confluence Refinements.md
+33beaab Delete claude reccomendation.txt
+```
+
+Conflict analysis (verified with `git diff --name-only bcdc981..HEAD`):
+
+- **The ONLY conflict is `HANDOFF.md`** — modify/delete: this branch rewrote/extended it (§16→§18), main deleted it. Everything else on main deletes files the branch never touched, so those deletions apply cleanly.
+- **Gate fix `b9e868b` merges cleanly** — the branch has ZERO changes under `apps/api/app/engine/gates/`. That fix (gates 7 smc_structure, 8 ichimoku_cloud, 9 fibonacci_levels, 14 pattern_recognition: score ranges −100..100, dynamic status/confidence, walrus bug) will come in with the merge untouched.
+
+### Next session priority #1 — resolve PR #3 (user decision needed)
+
+Merge main INTO the branch (keeps the PR valid — **no rebase/force-push** unless the user explicitly asks):
+
+```bash
+git checkout continue-v2-roadmap
+git merge origin/main            # conflicts on HANDOFF.md (modify/delete)
+# choose ONE:
+git rm HANDOFF.md                # (a) respect main's deletion — handoff lives on in git history
+git add HANDOFF.md               # (b) keep the file — resurrects HANDOFF.md on main via the merge
+git commit                       # finish the merge
+# re-verify: cd apps/api && venv/Scripts/python.exe -m pytest   (expect 140+ passed; gate fix may add tests)
+git push                         # upstream already set — NOT a force push
+```
+
+Decision point for the user: (a) or (b). Note main also deleted CLAUDE.md — if the branch is merged with HANDOFF.md kept, consider whether CLAUDE.md should stay deleted too (branch doesn't touch it, so it stays deleted either way).
+
+### PR #3 body is empty — paste this (or `gh pr edit 3 --body ...`)
+
+> Completes the full 7-priority §16 roadmap. Priorities: (1) Visual QA of all 16 pages + endpoints; (2) orderbook via Binance geo-fallback adapter — 4f088ed; (3) VADER news sentiment in Debate Chamber — 2609831; (4) SEC EDGAR panel on Journal — ebd403d, 2892a9a; (5) CoinGecko 60s TTL single-flight cache (cg_cache.py) killing 429s — d33d321; (6) funding history: Hyperliquid hourly time series primary (free, no key, no geo-block), CoinGecko snapshot + Binance fapi fallbacks — 5f5570e; OKX/Bybit tested and geo-blocked from Indonesia, intentionally not added. Verification: 140 pytest passed, tsc clean, live `/api/v1/derivatives/funding?symbol=BTCUSDT` returns 100 hourly rows from Hyperliquid. Merging also pulls in the main-side gate fixes (b9e868b, gates 7/8/9/14) cleanly.
+
+### Remaining priorities after the merge
+
+1. **OI time series** — per-symbol OI history (Hyperliquid `POST /info` may support it; mirror the funding approach).
+2. **Whale-movements latency** — blockchain.info rawblock ~23s; cache or lower timeout.
+3. CoinGecko cache cold-start bursts can still 429 under heavy concurrent use.
+
