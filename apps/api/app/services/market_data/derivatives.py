@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 BINANCE_VISION = "https://data-api.binance.vision"
 BINANCE_FAPI = "https://fapi.binance.com"
 COINGECKO = "https://api.coingecko.com/api/v3"
+HYPERLIQUID_INFO = "https://api.hyperliquid.xyz/info"
 TIMEOUT = 15.0
 
 
@@ -100,16 +101,61 @@ async def get_liquidation_heatmap(
     }
 
 
-async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict[str, Any]:
-    """Funding rate — CoinGecko derivatives (primary), Binance fapi (fallback).
+def _base_coin(symbol: str) -> str:
+    return symbol.upper().replace("/USDT", "").replace("-USDT", "").replace("USDT", "")
 
-    CoinGecko returns a current snapshot across all exchanges (no history).
-    Binance fapi returns real history but is geo-blocked in some regions.
+
+def _map_hl_funding(data: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Map Hyperliquid fundingHistory payloads to our row shape.
+
+    Skips entries missing a usable time/fundingRate. Keeps the most
+    recent `limit` rows.
     """
-    base = symbol.upper().replace("USDT", "").replace("/USDT", "")
-    now_ms = int(_time.time() * 1000)
+    rows: list[dict[str, Any]] = []
+    for x in data:
+        try:
+            t = int(x["time"])
+            fr = float(x["fundingRate"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        premium = x.get("premium")
+        rows.append({
+            "time": t,
+            "funding_rate": fr,
+            "premium": float(premium) if premium is not None else None,
+            "exchange": "hyperliquid",
+        })
+    return rows[-limit:] if limit else rows
 
-    # Primary: CoinGecko derivatives — current funding across exchanges
+
+async def _fetch_hyperliquid_history(symbol: str, limit: int) -> list[dict[str, Any]] | None:
+    """Real hourly funding time series from Hyperliquid's public info API.
+
+    Free, no key, no geo-block (verified reachable from Indonesia where
+    Binance fapi is blocked). Only covers coins listed on Hyperliquid;
+    returns None for anything else so callers fall through.
+    """
+    coin = _base_coin(symbol)
+    # Funding settles hourly on Hyperliquid; ask for one extra hour so a
+    # boundary can't shave the window below `limit` rows.
+    start_ms = int(_time.time() * 1000) - (limit + 1) * 3_600_000
+    async with _client() as c:
+        try:
+            r = await c.post(HYPERLIQUID_INFO,
+                             json={"type": "fundingHistory", "coin": coin, "startTime": start_ms})
+            if r.status_code == 200:
+                rows = _map_hl_funding(r.json(), limit)
+                if rows:
+                    return rows
+        except Exception as exc:
+            logger.debug("hyperliquid funding %s: %s", symbol, exc)
+    return None
+
+
+async def _fetch_coingecko_funding_snapshot(symbol: str, limit: int) -> list[dict[str, Any]] | None:
+    """Current funding across exchanges via CoinGecko derivatives (snapshot, no history)."""
+    base = _base_coin(symbol)
+    now_ms = int(_time.time() * 1000)
     async with _client() as c:
         try:
             r = await cached_get(c, f"{COINGECKO}/derivatives", params={"include_tickers": "unexpired"})
@@ -128,12 +174,14 @@ async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict
                                 "index": t.get("index"),
                             })
                 if rows:
-                    return {"symbol": symbol.upper(), "rows": rows[:limit],
-                            "source": "coingecko", "note": "current snapshot, multi-exchange"}
+                    return rows[:limit]
         except Exception as exc:
             logger.debug("coingecko funding %s: %s", symbol, exc)
+    return None
 
-    # Fallback: Binance fapi (works outside geo-blocked regions)
+
+async def _fetch_binance_funding(symbol: str, limit: int) -> list[dict[str, Any]] | None:
+    """Real funding history from Binance fapi (geo-blocked in some regions)."""
     async with _client() as c:
         try:
             r = await c.get(f"{BINANCE_FAPI}/fapi/v1/fundingRate",
@@ -141,13 +189,31 @@ async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict
             if r.status_code == 200 and r.text.strip().startswith("["):
                 data = r.json()
                 if data:
-                    return {
-                        "symbol": symbol.upper(),
-                        "rows": [{"time": int(x["fundingTime"]), "funding_rate": float(x["fundingRate"])} for x in data],
-                        "source": "binance-fapi",
-                    }
+                    return [{"time": int(x["fundingTime"]), "funding_rate": float(x["fundingRate"])} for x in data]
         except Exception as exc:
             logger.debug("fapi funding %s: %s", symbol, exc)
+    return None
+
+
+async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict[str, Any]:
+    """Funding rate history — Hyperliquid (primary), CoinGecko, Binance fapi.
+
+    Hyperliquid gives a real hourly time series (free, no key, no
+    geo-block) but only for coins it lists. CoinGecko gives a current
+    multi-exchange snapshot (no history). Binance fapi gives real history
+    but is geo-blocked in some regions (e.g. Indonesia).
+    """
+    for fetch, source, note in (
+        (_fetch_hyperliquid_history, "hyperliquid", "hourly history, single venue"),
+        (_fetch_coingecko_funding_snapshot, "coingecko", "current snapshot, multi-exchange"),
+        (_fetch_binance_funding, "binance-fapi", None),
+    ):
+        rows = await fetch(symbol, limit)
+        if rows:
+            out: dict[str, Any] = {"symbol": symbol.upper(), "rows": rows, "source": source}
+            if note:
+                out["note"] = note
+            return out
     return {"symbol": symbol.upper(), "rows": [], "source": "unavailable",
             "note": "all funding sources unreachable"}
 
