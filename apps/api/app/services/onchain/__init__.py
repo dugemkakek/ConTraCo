@@ -16,6 +16,8 @@ from typing import Any
 
 import httpx
 
+from app.services.market_data.cg_cache import cached_get
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = float(os.getenv("FREE_PROVIDER_TIMEOUT", "8.0"))
@@ -71,7 +73,8 @@ async def get_onchain_metrics(symbol: str) -> dict[str, Any] | None:
 
     async with _client() as client:
         try:
-            resp = await client.get(
+            resp = await cached_get(
+                client,
                 f"https://api.coingecko.com/api/v3/coins/{cg_id}",
                 params={
                     "localization": "false",

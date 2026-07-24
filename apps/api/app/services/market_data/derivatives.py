@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from app.services.market_data.cg_cache import cached_get
+
 logger = logging.getLogger(__name__)
 
 BINANCE_VISION = "https://data-api.binance.vision"
@@ -110,7 +112,7 @@ async def get_funding_history(symbol: str = "BTCUSDT", limit: int = 100) -> dict
     # Primary: CoinGecko derivatives — current funding across exchanges
     async with _client() as c:
         try:
-            r = await c.get(f"{COINGECKO}/derivatives", params={"include_tickers": "unexpired"})
+            r = await cached_get(c, f"{COINGECKO}/derivatives", params={"include_tickers": "unexpired"})
             if r.status_code == 200:
                 rows = []
                 for t in r.json():
@@ -161,8 +163,8 @@ async def get_open_interest_history(symbol: str = "BTCUSDT", period: str = "5m",
     # Primary: CoinGecko — exchange-level OI for major perp venues
     async with _client() as c:
         try:
-            r = await c.get(f"{COINGECKO}/derivatives/exchanges",
-                            params={"order": "open_interest_btc_desc", "per_page": "20", "page": "1"})
+            r = await cached_get(c, f"{COINGECKO}/derivatives/exchanges",
+                                 params={"order": "open_interest_btc_desc", "per_page": "20", "page": "1"})
             if r.status_code == 200:
                 rows = []
                 for ex in r.json():

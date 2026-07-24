@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.db.models import User
+from app.services.market_data.cg_cache import cached_get
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/intel", tags=["intel"])
@@ -201,7 +202,7 @@ async def trenches(
 
         # CoinGecko trending
         try:
-            resp3 = await c.get(f"{COINGECKO}/search/trending")
+            resp3 = await cached_get(c, f"{COINGECKO}/search/trending")
             if resp3.status_code == 200:
                 coins = (resp3.json() or {}).get("coins") or []
                 for item in coins[:10]:
