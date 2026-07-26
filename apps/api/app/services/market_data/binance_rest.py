@@ -40,6 +40,22 @@ def to_binance_pair(symbol: str) -> str:
     return symbol.replace("/", "").upper()
 
 
+_DEPTH_LIMITS = (5, 10, 20, 50, 100, 500, 1000, 5000)
+
+
+def _snap_depth(depth: int) -> int:
+    """Snap a requested depth up to the nearest /depth limit Binance accepts.
+
+    Binance rejects arbitrary limit values; rounding up (never down) ensures
+    we don't under-deliver the number of levels the caller asked for.
+    """
+    depth = max(1, int(depth))
+    for allowed in _DEPTH_LIMITS:
+        if depth <= allowed:
+            return allowed
+    return _DEPTH_LIMITS[-1]
+
+
 class BinanceRestProvider:
     name = "binance"
     venue_id = "binance"
@@ -252,13 +268,23 @@ class BinanceRestProvider:
         except Exception as exc:
             return {"symbol": pair, "long_short_ratio": None, "error": str(exc)}
 
-    async def get_orderbook(self, symbol: str, depth: int = 20) -> dict:
-        client = await self._get_client()
-        resp = await client.get(
-            "/depth", params={"symbol": to_binance_pair(symbol), "limit": depth}
-        )
-        if resp.status_code != 200:
-            return {"bids": [], "asks": []}
+    async def get_order_book(self, symbol: str, depth: int = 20) -> dict | None:
+        """Fetch spot order book depth.
+
+        Named ``get_order_book`` to match the interface the snapshot pipeline
+        and the /orderbook route discover via getattr/hasattr. Routes through
+        ``_get_with_fallback`` so geo-blocked api.binance.com falls back to
+        data-api.binance.vision (same path as ``get_ohlcv``). Returns ``None``
+        when every base fails, mirroring the Gate.io adapter contract.
+        """
+        limit = _snap_depth(depth)
+        try:
+            resp = await self._get_with_fallback(
+                "/depth", params={"symbol": to_binance_pair(symbol), "limit": limit}
+            )
+        except Exception as exc:
+            logger.warning("orderbook fetch failed for %s: %s", symbol, exc)
+            return None
         data = resp.json()
         return {
             "bids": [[float(p), float(q)] for p, q in data.get("bids", [])],

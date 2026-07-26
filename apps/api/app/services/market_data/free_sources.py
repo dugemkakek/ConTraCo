@@ -33,6 +33,9 @@ from typing import Any
 
 import httpx
 
+from app.services.market_data.cg_cache import DEFAULT_TTL as CG_CACHE_TTL
+from app.services.market_data.cg_cache import cached_get
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = float(os.getenv("FREE_PROVIDER_TIMEOUT", "8.0"))
@@ -65,11 +68,18 @@ def _get(d: dict[str, Any], *path: str, default: Any = None) -> Any:
 
 
 async def _get_json(url: str, *, params: dict[str, Any] | None = None,
-                    headers: dict[str, str] | None = None) -> ProviderResult:
+                    headers: dict[str, str] | None = None,
+                    cache_ttl: float | None = None) -> ProviderResult:
     headers = {"User-Agent": USER_AGENT, "Accept": "application/json", **(headers or {})}
     try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, verify=_ssl_setting()) as client:
-            resp = await client.get(url, params=params or {}, headers=headers)
+        # Headers on the client (not per-request) so cached_get — which does
+        # not forward per-request headers — still sends the User-Agent.
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, verify=_ssl_setting(),
+                                     headers=headers) as client:
+            if cache_ttl is not None:
+                resp = await cached_get(client, url, params=params or {}, ttl=cache_ttl)
+            else:
+                resp = await client.get(url, params=params or {})
             if resp.status_code == 429:
                 return ProviderResult(None, f"rate-limited ({resp.status_code})")
             if resp.status_code >= 400:
@@ -83,7 +93,8 @@ async def _get_json(url: str, *, params: dict[str, Any] | None = None,
 
 async def fetch_coingecko_global() -> ProviderResult:
     """BTC dominance + total market cap. No key needed for the public endpoint."""
-    res = await _get_json("https://api.coingecko.com/api/v3/global")
+    res = await _get_json("https://api.coingecko.com/api/v3/global",
+                          cache_ttl=CG_CACHE_TTL)
     if res.error or not isinstance(res.value, dict):
         return res
     data = _get(res.value, "data", "market_cap_percentage", default={}) or {}
@@ -110,6 +121,7 @@ async def fetch_coingecko_simple_price(symbols: list[str]) -> ProviderResult:
         "https://api.coingecko.com/api/v3/simple/price",
         params={"ids": ",".join(cg_ids), "vs_currencies": "usd",
                 "include_24hr_change": "true", "include_market_cap": "true"},
+        cache_ttl=CG_CACHE_TTL,
     )
     if res.error:
         return res

@@ -60,13 +60,24 @@ export type DebateMember = {
   weight: number;
   reasoning: string;
   low_conviction: boolean;
-  source: "gate" | "council";
+  source: "gate" | "council" | "news";
 };
 
 export type DebateCamp = {
   members: DebateMember[];
   summary: string;
   total_weight: number;
+};
+
+export type DebateNewsSentiment = {
+  sentiment_label: string | null;
+  mean_compound: number | null;
+  bullish: number;
+  bearish: number;
+  total_articles: number;
+  macro_label: string | null;
+  macro_compound: number | null;
+  top_headlines: string[];
 };
 
 export type ConfluenceResult = {
@@ -88,6 +99,7 @@ export type ConfluenceResult = {
     scenario: { primary: string; alternative: string; invalidation: string };
     low_conviction_flags: string[];
     debate_summary: string;
+    news_sentiment?: DebateNewsSentiment | null;
   };
 };
 
@@ -408,6 +420,40 @@ export async function journalSummary(): Promise<{
   losers: number;
 }> {
   return request("/api/v1/journal/summary");
+}
+
+export type SecFinancialPoint = {
+  value: number | null;
+  period: string | null;
+  form: string | null;
+  frame: string | null;
+};
+
+export type SecFiling = {
+  form: string;
+  title: string;
+  filing_date: string;
+  url: string;
+};
+
+export type SecCompanyContext = {
+  ticker: string;
+  available: boolean;
+  reason?: string;
+  company_name?: string;
+  cik?: string;
+  financials?: {
+    revenue: SecFinancialPoint | null;
+    net_income: SecFinancialPoint | null;
+    eps_diluted: SecFinancialPoint | null;
+    total_assets: SecFinancialPoint | null;
+  };
+  recent_filings?: SecFiling[];
+  source: string;
+};
+
+export async function secContext(ticker: string): Promise<SecCompanyContext> {
+  return request(`/api/v1/sec/context?ticker=${encodeURIComponent(ticker)}`);
 }
 
 export async function getTradesConfig(): Promise<TradesConfig> {

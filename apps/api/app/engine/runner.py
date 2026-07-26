@@ -127,6 +127,23 @@ async def run_analysis(
         symbol_meta["quote_volume_24h"] = (
             order_book.get("quote_volume_24h") if order_book else None
         )
+        # The default snapshot pipeline does not fetch a funding category, so
+        # symbol_meta["funding_rate"] is None on the analysis path. Backfill it
+        # from the live derivatives service (Hyperliquid primary) — the same
+        # source /fundamentals/funding uses — so the funding_rate gate produces
+        # a real verdict instead of UNAVAILABLE.
+        if symbol_meta.get("funding_rate") is None:
+            try:
+                from app.services.market_data.derivatives import get_funding_history
+
+                fh = await get_funding_history(symbol, limit=24)
+                rows = fh.get("rows") or []
+                if rows:
+                    latest = rows[-1]
+                    symbol_meta["funding_rate"] = latest.get("funding_rate")
+                    symbol_meta.setdefault("funding_source", fh.get("source"))
+            except Exception:  # noqa: BLE001
+                logger.exception("live funding backfill failed for %s", symbol)
         gctx = GateContext(
             symbol=symbol, timeframe=timeframe, candles=candles,
             order_book=order_book, symbol_meta=symbol_meta,
@@ -244,7 +261,18 @@ async def run_analysis(
              "confidence": o.confidence, "reason": o.reason}
             for o in opinions
         ]
-        debate = run_debate(verdicts, conf_result.scenario, council_op_dicts)
+        # The fundamental_context gate already fetched VADER-scored news
+        # sentiment — reuse it in the debate instead of hitting the network
+        # a second time.
+        news_ev = next(
+            (ge.evidence.get("news") for ge in gate_evals
+             if ge.name == "fundamental_context"),
+            None,
+        )
+        debate = run_debate(
+            verdicts, conf_result.scenario, council_op_dicts,
+            news_sentiment=news_ev,
+        )
         conf_dict["debate"] = debate.to_dict()
 
         # 5) decision

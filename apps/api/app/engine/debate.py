@@ -28,7 +28,7 @@ class CampMember:
     weight: float
     reasoning: str
     low_conviction: bool = False
-    source: str = "gate"    # "gate" or "council"
+    source: str = "gate"    # "gate", "council", or "news"
 
 
 @dataclass
@@ -79,6 +79,7 @@ class DebateResult:
     scenario: ScenarioFrame
     low_conviction_flags: list[str] = field(default_factory=list)
     debate_summary: str = ""
+    news_sentiment: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +120,7 @@ class DebateResult:
             },
             "low_conviction_flags": self.low_conviction_flags,
             "debate_summary": self.debate_summary,
+            "news_sentiment": self.news_sentiment,
         }
 
 
@@ -127,6 +129,7 @@ def run_debate(
     scenario: ScenarioFrame,
     council_opinions: list[dict[str, Any]] | None = None,
     low_conviction_floor: float = LOW_CONVICTION_FLOOR,
+    news_sentiment: dict[str, Any] | None = None,
 ) -> DebateResult:
     """Run the CRO debate protocol.
 
@@ -136,6 +139,10 @@ def run_debate(
         council_opinions: optional list of council opinion dicts
             with keys: role, direction (LONG/SHORT/WAIT), confidence, reason
         low_conviction_floor: confidence threshold for "low conviction" flag
+        news_sentiment: optional VADER news payload from the
+            fundamental_context gate (``evidence["news"]``). Surfaced as a
+            weight-0 informational camp member plus a UI payload; payloads
+            with an ``error`` key or zero articles are ignored.
     """
     bull = DebateCamp(label="BULL")
     bear = DebateCamp(label="BEAR")
@@ -191,6 +198,45 @@ def run_debate(
             else:
                 neutral.members.append(member)
 
+    # Surface VADER news sentiment from the fundamental_context gate.
+    # Informational only: weight 0, never affects the confluence score —
+    # it just joins the debate so the UI can show what the headlines say.
+    news_payload: dict[str, Any] | None = None
+    if (
+        news_sentiment
+        and "error" not in news_sentiment
+        and news_sentiment.get("total_articles")
+    ):
+        label = str(news_sentiment.get("sentiment_label", "neutral")).lower()
+        direction = 1 if label == "bullish" else -1 if label == "bearish" else 0
+        compound = float(news_sentiment.get("mean_compound", 0.0) or 0.0)
+        n_bull = int(news_sentiment.get("bullish", 0) or 0)
+        n_bear = int(news_sentiment.get("bearish", 0) or 0)
+        n_total = int(news_sentiment.get("total_articles", 0) or 0)
+        conf = min(abs(compound) * 2.0, 1.0)
+        lc = conf < low_conviction_floor
+        member = CampMember(
+            name="news_sentiment",
+            direction=direction,
+            confidence=conf,
+            weight=0.0,
+            reasoning=(
+                f"News sentiment {label} (compound {compound:+.3f}): "
+                f"{n_bull} bullish / {n_bear} bearish across {n_total} headlines."
+            ),
+            low_conviction=lc,
+            source="news",
+        )
+        if lc:
+            low_flags.append(f"news_sentiment (conf={conf:.2f})")
+        if direction > 0:
+            bull.members.append(member)
+        elif direction < 0:
+            bear.members.append(member)
+        else:
+            neutral.members.append(member)
+        news_payload = news_sentiment
+
     # Sort each camp by confidence descending
     for camp in (bull, bear, neutral):
         camp.members.sort(key=lambda m: m.confidence, reverse=True)
@@ -219,6 +265,7 @@ def run_debate(
         scenario=scenario,
         low_conviction_flags=low_flags,
         debate_summary=debate_summary,
+        news_sentiment=news_payload,
     )
 
 

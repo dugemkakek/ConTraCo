@@ -79,6 +79,40 @@ def _row_to_dict(row) -> dict:
     return d
 
 
+async def _live_funding_fallback(symbol: str | None, hours: int) -> list[dict]:
+    """Live hourly funding series when the FundingRate table is empty.
+
+    Delegates to the derivatives service (Hyperliquid primary, CoinGecko /
+    Binance fapi fallbacks) and maps its ``{time, funding_rate, exchange}``
+    rows onto the FundingRateOut shape. Synthesises a stable ``id`` per row
+    (no DB primary key exists for live data) and clips to the ``hours``
+    window the caller asked for.
+    """
+    from app.services.market_data.derivatives import get_funding_history
+
+    sym = (symbol or "BTCUSDT").upper()
+    cutoff_ms = int((datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp() * 1000)
+    try:
+        payload = await get_funding_history(sym, limit=max(hours, 24))
+    except Exception:  # noqa: BLE001
+        logger.exception("live funding fallback failed for %s", sym)
+        return []
+    out: list[dict] = []
+    for i, r in enumerate(payload.get("rows") or []):
+        t = r.get("time")
+        if t is None or t < cutoff_ms:
+            continue
+        out.append({
+            "id": i + 1,
+            "symbol": payload.get("symbol", sym),
+            "venue": r.get("exchange", payload.get("source", "unknown")),
+            "rate": float(r.get("funding_rate", 0.0)),
+            "timestamp": datetime.fromtimestamp(t / 1000, tz=timezone.utc).isoformat(),
+        })
+    out.sort(key=lambda x: x["timestamp"], reverse=True)
+    return out
+
+
 @router.get("/news", response_model=list[NewsItemOut])
 def list_news(
     symbol: str | None = Query(None),
@@ -87,14 +121,19 @@ def list_news(
     db: Session = Depends(get_db),
 ):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-    stmt = select(NewsItem).where(NewsItem.created_at >= cutoff).order_by(desc(NewsItem.created_at)).limit(50)
+    # symbol_relevance is a JSON list column, not a PG ARRAY — filter in Python
+    # (matches services/fundamentals/context_builder.py). Fetch a wider window,
+    # then narrow + cap so a symbol filter still yields up to 50 matches.
+    stmt = select(NewsItem).where(NewsItem.created_at >= cutoff).order_by(desc(NewsItem.created_at))
+    stmt = stmt.limit(50 if not symbol else 500)
+    rows = db.execute(stmt).scalars().all()
     if symbol:
-        stmt = stmt.where(NewsItem.symbol_relevance.any(symbol))
-    return [_row_to_dict(r) for r in db.execute(stmt).scalars().all()]
+        rows = [r for r in rows if symbol in (r.symbol_relevance or [])][:50]
+    return [_row_to_dict(r) for r in rows]
 
 
 @router.get("/calendar", response_model=list[EconomicEventOut])
-def list_calendar(
+async def list_calendar(
     days: int = Query(default=7, ge=1, le=30),
     _user=Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -107,11 +146,18 @@ def list_calendar(
         .where(EconomicEvent.event_time <= cutoff)
         .order_by(EconomicEvent.event_time)
     )
-    return [_row_to_dict(r) for r in db.execute(stmt).scalars().all()]
+    rows = db.execute(stmt).scalars().all()
+    if rows:
+        return [_row_to_dict(r) for r in rows]
+    # No stored events — serve the live ForexFactory (faireconomy mirror)
+    # calendar so the endpoint returns real upcoming events, not a bare [].
+    from app.services.fundamentals.macro_sources import get_economic_calendar
+
+    return await get_economic_calendar(days)
 
 
 @router.get("/funding", response_model=list[FundingRateOut])
-def list_funding(
+async def list_funding(
     symbol: str | None = Query(None),
     hours: int = Query(default=24, ge=1, le=168),
     _user=Depends(get_current_user),
@@ -121,11 +167,17 @@ def list_funding(
     stmt = select(FundingRate).where(FundingRate.timestamp >= cutoff).order_by(desc(FundingRate.timestamp)).limit(50)
     if symbol:
         stmt = stmt.where(FundingRate.symbol == symbol)
-    return [_row_to_dict(r) for r in db.execute(stmt).scalars().all()]
+    rows = db.execute(stmt).scalars().all()
+    if rows:
+        return [_row_to_dict(r) for r in rows]
+    # No stored funding yet — serve a live hourly series so the endpoint is
+    # never bare-empty. Hyperliquid (free, no key, reachable from geo-blocked
+    # regions) is the primary source inside get_funding_history.
+    return await _live_funding_fallback(symbol, hours)
 
 
 @router.get("/onchain", response_model=list[OnChainMetricOut])
-def list_onchain(
+async def list_onchain(
     symbol: str | None = Query(None),
     hours: int = Query(default=24, ge=1, le=168),
     _user=Depends(get_current_user),
@@ -135,7 +187,17 @@ def list_onchain(
     stmt = select(OnChainMetric).where(OnChainMetric.timestamp >= cutoff).order_by(desc(OnChainMetric.timestamp)).limit(50)
     if symbol:
         stmt = stmt.where(OnChainMetric.symbol == symbol)
-    return [_row_to_dict(r) for r in db.execute(stmt).scalars().all()]
+    rows = db.execute(stmt).scalars().all()
+    if rows:
+        return [_row_to_dict(r) for r in rows]
+    # No stored metrics — serve live Bitcoin on-chain data from blockchain.info
+    # (free, no key). Only BTC is available upstream; a non-BTC symbol filter
+    # correctly yields an empty list.
+    if symbol and symbol.upper() not in {"BTC", "BTCUSDT", "XBT"}:
+        return []
+    from app.services.fundamentals.macro_sources import get_onchain_metrics
+
+    return await get_onchain_metrics(hours)
 
 
 @router.get("/context", response_model=ContextOut)

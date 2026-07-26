@@ -23,6 +23,31 @@ USER_AGENT = "confluence-trading-consultant/1.0 admin@confluence.local"
 BASE = "https://data.sec.gov"
 EFTS = "https://efts.sec.gov/LATEST/search-index"
 
+# Revenue tags in order of preference. Companies migrate taxonomy tags
+# over time (AAPL retired ``Revenues`` after FY2018 in favor of the
+# ASC-606 tag), so try the modern tag first and fall back.
+REVENUE_CONCEPTS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "Revenues",
+    "SalesRevenueNet",
+)
+
+
+def _pick_entry(units: dict[str, Any]) -> dict[str, Any] | None:
+    """Pick the single best XBRL entry from a concept's unit buckets.
+
+    Prefers annual 10-K (fp=FY) values so the fundamentals snapshot
+    shows one coherent fiscal year rather than a stray quarter, and
+    takes the latest period-end within that pool (tie-broken by the
+    most recent filing date, so amendments win).
+    """
+    bucket = next(iter(units.values()), None) if units else None
+    if not bucket:
+        return None
+    annual = [e for e in bucket if e.get("form") == "10-K" and e.get("fp") == "FY"]
+    pool = annual or bucket
+    return max(pool, key=lambda e: (e.get("end") or "", e.get("filed") or ""))
+
 
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
@@ -55,32 +80,34 @@ async def get_company_facts(ticker: str) -> dict[str, Any] | None:
             if not cik:
                 return None
 
-            # Fetch company facts
-            resp = await client.get(f"{BASE}/api/xbrl/companyconcept/CIK{cik}/us-gaap/Revenues.json")
-            revenues = resp.json() if resp.status_code == 200 else None
+            # Fetch company facts. Revenue tries several taxonomy tags
+            # (see REVENUE_CONCEPTS); the others are stable concepts.
+            async def _concept(name: str) -> dict | None:
+                resp = await client.get(f"{BASE}/api/xbrl/companyconcept/CIK{cik}/us-gaap/{name}.json")
+                return resp.json() if resp.status_code == 200 else None
 
-            resp = await client.get(f"{BASE}/api/xbrl/companyconcept/CIK{cik}/us-gaap/NetIncomeLoss.json")
-            net_income = resp.json() if resp.status_code == 200 else None
+            revenues = None
+            for concept in REVENUE_CONCEPTS:
+                data = await _concept(concept)
+                if data and _pick_entry(data.get("units") or {}):
+                    revenues = data
+                    break
 
-            resp = await client.get(f"{BASE}/api/xbrl/companyconcept/CIK{cik}/us-gaap/EarningsPerShareDiluted.json")
-            eps = resp.json() if resp.status_code == 200 else None
-
-            resp = await client.get(f"{BASE}/api/xbrl/companyconcept/CIK{cik}/us-gaap/Assets.json")
-            assets = resp.json() if resp.status_code == 200 else None
+            net_income = await _concept("NetIncomeLoss")
+            eps = await _concept("EarningsPerShareDiluted")
+            assets = await _concept("Assets")
 
             def _latest(concept_data: dict | None) -> dict | None:
                 if not concept_data:
                     return None
-                units = concept_data.get("units", {})
-                usd = units.get("USD") or units.get("shares") or []
-                if not usd:
+                entry = _pick_entry(concept_data.get("units") or {})
+                if not entry:
                     return None
-                latest = usd[-1]
                 return {
-                    "value": latest.get("val"),
-                    "period": latest.get("end"),
-                    "form": latest.get("form"),
-                    "frame": latest.get("frame"),
+                    "value": entry.get("val"),
+                    "period": entry.get("end"),
+                    "form": entry.get("form"),
+                    "frame": entry.get("frame"),
                 }
 
             return {
@@ -105,11 +132,13 @@ async def search_filings(ticker: str, form_type: str = "10-K", limit: int = 5) -
     """
     async with _client() as client:
         try:
+            # NB: the ``company=`` param matches company NAMES only —
+            # a ticker yields zero hits. ``CIK=`` accepts a ticker or CIK.
             resp = await client.get(
                 "https://www.sec.gov/cgi-bin/browse-edgar",
                 params={
                     "action": "getcompany",
-                    "company": ticker,
+                    "CIK": ticker,
                     "type": form_type,
                     "dateb": "",
                     "owner": "include",

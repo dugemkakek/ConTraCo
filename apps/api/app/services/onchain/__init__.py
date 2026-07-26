@@ -16,6 +16,8 @@ from typing import Any
 
 import httpx
 
+from app.services.market_data.cg_cache import cached_get
+
 logger = logging.getLogger(__name__)
 
 TIMEOUT = float(os.getenv("FREE_PROVIDER_TIMEOUT", "8.0"))
@@ -65,13 +67,21 @@ async def get_onchain_metrics(symbol: str) -> dict[str, Any] | None:
     Returns None if the symbol is not supported or all fetches fail.
     """
     base = symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
+    # Strip a trailing quote currency ("BTCUSDT" -> "BTC") so pair-style
+    # symbols resolve to a CoinGecko id. Longest suffixes first so e.g.
+    # "USDT"/"USDC" win over "USD".
+    for quote in ("USDT", "USDC", "BUSD", "USD"):
+        if base.endswith(quote) and base != quote:
+            base = base[: -len(quote)]
+            break
     cg_id = COINGECKO_IDS.get(base)
     if not cg_id:
         return None
 
     async with _client() as client:
         try:
-            resp = await client.get(
+            resp = await cached_get(
+                client,
                 f"https://api.coingecko.com/api/v3/coins/{cg_id}",
                 params={
                     "localization": "false",

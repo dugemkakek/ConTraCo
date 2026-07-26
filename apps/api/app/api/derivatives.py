@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_current_user
 from app.db.models import User
+from app.services.market_data.cg_cache import cached_get
 from app.services.market_data.derivatives import (
     get_funding_history,
     get_liquidation_heatmap,
@@ -74,14 +75,14 @@ async def arbitrage_scan(
     q = symbol.lower().replace("/usdt", "")
     async with httpx.AsyncClient(timeout=20, verify=False) as c:
         try:
-            search = (await c.get(f"{CG}/search", params={"query": q})).json()
+            search = (await cached_get(c, f"{CG}/search", params={"query": q})).json()
             coins = search.get("coins", [])
             match = next((x for x in coins if x.get("symbol", "").lower() == q), None)
             if not match:
                 return {"symbol": symbol.upper(), "markets": [], "opportunities": [], "error": "symbol not found"}
             coin_id = match["id"]
-            tickers = (await c.get(f"{CG}/coins/{coin_id}/tickers",
-                                   params={"page": 1, "include_exchange_logo": "false"})).json()
+            tickers = (await cached_get(c, f"{CG}/coins/{coin_id}/tickers",
+                                        params={"page": 1, "include_exchange_logo": "false"})).json()
         except Exception as exc:
             raise HTTPException(502, f"coingecko unavailable: {exc}")
 

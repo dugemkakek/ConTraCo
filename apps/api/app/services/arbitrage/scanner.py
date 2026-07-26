@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from app.services.market_data.cg_cache import cached_get
+
 logger = logging.getLogger(__name__)
 
 COINGECKO = "https://api.coingecko.com/api/v3"
@@ -42,7 +44,8 @@ def _client() -> httpx.AsyncClient:
 async def _coingecko_tickers(client: httpx.AsyncClient, coin_id: str) -> list[dict]:
     """Fetch per-exchange USDT tickers for a coin from CoinGecko."""
     try:
-        resp = await client.get(
+        resp = await cached_get(
+            client,
             f"{COINGECKO}/coins/{coin_id}/tickers",
             params={"include_exchange_logo": "false", "depth": "false"},
         )

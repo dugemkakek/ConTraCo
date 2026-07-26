@@ -246,12 +246,13 @@ def save_spec(
             .where(StrategyConfig.name == name)
             .values(is_active=False)
         )
+    # NOTE: StrategyConfig has no creator FK column — the ``created_by_id``
+    # parameter is accepted for caller convenience/audit but not persisted.
     row = StrategyConfig(
         name=name,
         version=new_version,
         payload=spec.model_dump(mode="json"),
         is_active=activate,
-        created_by_id=created_by_id,
     )
     db.add(row)
     db.commit()
