@@ -1,6 +1,7 @@
 """Aggregated market overview for the dashboard page."""
 
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -23,6 +24,11 @@ router = APIRouter(prefix="/api/v1", tags=["market-overview"])
 SPARKLINE_LEN = 30
 TREND_EMA_FAST = 20
 TREND_EMA_SLOW = 50
+# Cap simultaneous upstream requests so a 24-symbol universe (48 calls)
+# doesn't burst the provider's rate limit. 8 in flight keeps the cold
+# load near the latency of one symbol's fetch while staying well under
+# Binance's spot weight budget.
+_OVERVIEW_CONCURRENCY = 8
 
 
 def _rsi(closes: list[float], period: int = 14) -> float | None:
@@ -60,49 +66,67 @@ def _trend_from_ema(closes: list[float], last: float) -> str:
     return "up" if fast > slow else "down"
 
 
+async def _snapshot(provider, symbol: str, sem: asyncio.Semaphore) -> TickerSnapshot | None:
+    """Fetch one symbol's 1h+1d candles and fold them into a snapshot.
+
+    Returns ``None`` (skipping the symbol) on fetch error or empty 1h
+    history — same behaviour as the original serial loop, just isolated
+    so the universe can be fetched concurrently.
+    """
+    async with sem:
+        try:
+            # The 1h and 1d fetches are independent — run them together.
+            candles_1h, candles_1d = await asyncio.gather(
+                provider.get_ohlcv(symbol, "1h", 60),
+                provider.get_ohlcv(symbol, "1d", 2),
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("overview: fetch failed for %s", symbol)
+            return None
+
+    if not candles_1h:
+        return None
+
+    closes = [c.close for c in candles_1h]
+    last = closes[-1]
+    trend = _trend_from_ema(closes, last)
+
+    change_24h: float | None = None
+    high_24h: float | None = None
+    low_24h: float | None = None
+    vol_24h: float | None = None
+    if candles_1d:
+        today = candles_1d[-1]
+        high_24h, low_24h, vol_24h = today.high, today.low, today.volume
+        if today.open:
+            change_24h = round((today.close - today.open) / today.open * 100, 2)
+
+    return TickerSnapshot(
+        symbol=symbol,
+        last=last,
+        change_24h_pct=change_24h,
+        high_24h=high_24h,
+        low_24h=low_24h,
+        volume_24h=vol_24h,
+        rsi_14=_rsi(closes),
+        trend=trend,
+        sparkline=closes[-SPARKLINE_LEN:],
+    )
+
+
 @router.get("/market-overview", response_model=MarketOverview)
 async def market_overview(_user=Depends(get_current_user)):
     provider = build_provider()
     universe = list(provider.supported_symbols())
-    tickers: list[TickerSnapshot] = []
 
-    for symbol in universe:
-        try:
-            candles_1h = await provider.get_ohlcv(symbol, "1h", 60)
-            candles_1d = await provider.get_ohlcv(symbol, "1d", 2)
-        except Exception:  # noqa: BLE001
-            logger.exception("overview: fetch failed for %s", symbol)
-            continue
-        if not candles_1h:
-            continue
-
-        closes = [c.close for c in candles_1h]
-        last = closes[-1]
-        trend = _trend_from_ema(closes, last)
-
-        change_24h: float | None = None
-        high_24h: float | None = None
-        low_24h: float | None = None
-        vol_24h: float | None = None
-        if candles_1d:
-            today = candles_1d[-1]
-            high_24h, low_24h, vol_24h = today.high, today.low, today.volume
-            if today.open:
-                change_24h = round((today.close - today.open) / today.open * 100, 2)
-
-        tickers.append(
-            TickerSnapshot(
-                symbol=symbol,
-                last=last,
-                change_24h_pct=change_24h,
-                high_24h=high_24h,
-                low_24h=low_24h,
-                volume_24h=vol_24h,
-                rsi_14=_rsi(closes),
-                trend=trend,
-                sparkline=closes[-SPARKLINE_LEN:],
-            )
-        )
+    # Fetch the whole universe concurrently (bounded) instead of one
+    # symbol at a time. gather preserves order, so ``tickers`` keeps the
+    # universe's ordering after we drop the skipped (None) entries.
+    sem = asyncio.Semaphore(_OVERVIEW_CONCURRENCY)
+    snapshots = await asyncio.gather(
+        *(_snapshot(provider, symbol, sem) for symbol in universe)
+    )
+    tickers: list[TickerSnapshot] = [t for t in snapshots if t is not None]
 
     up = sum(1 for t in tickers if t.trend == "up")
     down = sum(1 for t in tickers if t.trend == "down")
