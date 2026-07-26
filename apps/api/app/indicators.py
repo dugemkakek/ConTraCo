@@ -152,7 +152,12 @@ def adx(bars: Iterable[_Bar], period: int = 14) -> list[float]:
         100 * abs(p - m) / (p + m) if (p + m) else 0
         for p, m in zip(plus_di, minus_di)
     ]
-    adx_vals = smooth(dx)
+    # ``smooth`` returns Wilder's smoothed *sum*; that is correct for the DI
+    # lines (a ratio of two smoothed sums is bounded 0-100), but ADX is the
+    # smoothed *average* of DX. Dividing the smoothed sum by ``period`` is
+    # algebraically Wilder's ADX recurrence and keeps ADX in 0-100 (a sum
+    # here yields ~period*avg, e.g. the impossible 215 we saw in production).
+    adx_vals = [v / period for v in smooth(dx)]
     # pad the head to align length
     head = len(bars) - len(adx_vals)
     return ([20.0] * head) + adx_vals
