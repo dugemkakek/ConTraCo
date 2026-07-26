@@ -11,6 +11,7 @@ GET /symbols/spot-pairs  — Live Binance spot pair snapshot
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -36,6 +37,22 @@ BINANCE_REST = "https://api.binance.com"
 BINANCE_VISION = "https://data-api.binance.vision"
 VERIFY_SSL = os.getenv("FREE_PROVIDER_VERIFY_SSL", "1") == "1"
 TIMEOUT = float(os.getenv("FREE_PROVIDER_TIMEOUT", "8.0"))
+
+# TradingView's public symbol_search endpoint 403s a bare httpx User-Agent —
+# it needs a full browser UA plus a tradingview.com Referer/Origin. With these
+# it returns 200 reliably; without them every request is blocked.
+_TV_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    ),
+    "Referer": "https://www.tradingview.com/",
+    "Origin": "https://www.tradingview.com",
+    "Accept": "application/json",
+}
+# TradingView wraps the matched substring of a hit in <em>…</em>. Strip the
+# tags so callers get clean symbol/description strings.
+_EM_TAGS = re.compile(r"</?em>")
 
 
 class SymbolOut(BaseModel):
@@ -89,19 +106,28 @@ async def _binance_pairs() -> list[dict[str, Any]]:
 
 
 async def _tradingview_results(query: str, limit: int) -> list[dict[str, Any]]:
-    """Hit the public TradingView symbol_search endpoint."""
+    """Hit the public TradingView symbol_search endpoint.
+
+    Requires browser-like headers (see ``_TV_HEADERS``) or TradingView 403s.
+    Falls back to filtering the live Binance spot catalog by ``query`` when
+    TradingView is unreachable or returns nothing, so the catalog is never
+    bare-empty.
+    """
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, verify=VERIFY_SSL) as client:
+        async with httpx.AsyncClient(
+            timeout=TIMEOUT, verify=VERIFY_SSL, headers=_TV_HEADERS
+        ) as client:
             resp = await client.get(
                 TV_SYMBOL_SEARCH,
                 params={"text": query or "BTC", "hl": "en",
                         "exchange": "", "lang": "en"},
             )
-            if resp.status_code != 200:
-                return []
+            if resp.status_code != 200 or not resp.text.strip().startswith("["):
+                logger.debug("tradingview search %s -> %s", query, resp.status_code)
+                return await _binance_catalog_fallback(query, limit)
             out: list[dict[str, Any]] = []
             for row in (resp.json() or []):
-                raw_sym = row.get("symbol") or ""
+                raw_sym = _EM_TAGS.sub("", row.get("symbol") or "")
                 ex = (row.get("exchange") or "").lower()
                 if ":" in raw_sym:
                     ex_tv, sym_only = raw_sym.split(":", 1)
@@ -113,16 +139,39 @@ async def _tradingview_results(query: str, limit: int) -> list[dict[str, Any]]:
                     "base": raw_sym,
                     "quote": "",
                     "display": raw_sym,
-                    "description": row.get("description") or "",
+                    "description": _EM_TAGS.sub("", row.get("description") or ""),
                     "type": row.get("type") or "",
                     "is_active": True,
                 })
                 if len(out) >= limit:
                     break
-            return out
+            if out:
+                return out
     except Exception as exc:  # noqa: BLE001
         logger.debug("tradingview search failed: %s", exc)
-        return []
+    return await _binance_catalog_fallback(query, limit)
+
+
+async def _binance_catalog_fallback(query: str, limit: int) -> list[dict[str, Any]]:
+    """Live Binance spot pairs filtered by ``query`` — the reliable fallback
+    when TradingView is blocked. Matches on base asset or full pair symbol."""
+    q = (query or "").strip().upper()
+    pairs = await _binance_pairs()
+    if q:
+        pairs = [p for p in pairs if q in p["symbol"] or q in p["base"]]
+    out: list[dict[str, Any]] = []
+    for p in pairs[:limit]:
+        out.append({
+            "symbol": p["symbol"],
+            "exchange": "binance",
+            "base": p["base"],
+            "quote": p["quote"],
+            "display": p["display"],
+            "description": f"{p['base']} / {p['quote']}",
+            "type": "spot",
+            "is_active": True,
+        })
+    return out
 
 
 @router.get("", response_model=list[SymbolOut])

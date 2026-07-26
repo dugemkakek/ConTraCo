@@ -32,7 +32,10 @@ async def top_pools(
     network: str = Query("ethereum"),
     limit: int = Query(20, ge=1, le=100),
 ) -> dict:
-    res = await dex_service.list_top_pools(network=network, limit=limit)
+    try:
+        res = await dex_service.list_top_pools(network=network, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if "error" in res and "pools" not in res:
         raise HTTPException(status_code=502, detail=res["error"])
     return res
@@ -42,7 +45,10 @@ async def top_pools(
 async def pool_detail(pool_address: str, network: str = Query("ethereum")) -> dict:
     if not pool_address.startswith("0x") or len(pool_address) != 42:
         raise HTTPException(status_code=400, detail="pool_address must be 0x-prefixed 20-byte hex")
-    res = await dex_service.get_pool(pool_address, network=network)
+    try:
+        res = await dex_service.get_pool(pool_address, network=network)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if "error" in res:
         raise HTTPException(status_code=502, detail=res["error"])
     return res
@@ -50,7 +56,10 @@ async def pool_detail(pool_address: str, network: str = Query("ethereum")) -> di
 
 @router.get("/pools/range")
 async def network_range(network: str = Query("ethereum")) -> dict:
-    res = await dex_service.aggregate_network_state(network=network)
+    try:
+        res = await dex_service.aggregate_network_state(network=network)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if "error" in res:
         raise HTTPException(status_code=502, detail=res["error"])
     return res
