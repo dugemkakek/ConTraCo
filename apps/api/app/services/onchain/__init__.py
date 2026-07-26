@@ -67,6 +67,13 @@ async def get_onchain_metrics(symbol: str) -> dict[str, Any] | None:
     Returns None if the symbol is not supported or all fetches fail.
     """
     base = symbol.split("/")[0].upper() if "/" in symbol else symbol.upper()
+    # Strip a trailing quote currency ("BTCUSDT" -> "BTC") so pair-style
+    # symbols resolve to a CoinGecko id. Longest suffixes first so e.g.
+    # "USDT"/"USDC" win over "USD".
+    for quote in ("USDT", "USDC", "BUSD", "USD"):
+        if base.endswith(quote) and base != quote:
+            base = base[: -len(quote)]
+            break
     cg_id = COINGECKO_IDS.get(base)
     if not cg_id:
         return None

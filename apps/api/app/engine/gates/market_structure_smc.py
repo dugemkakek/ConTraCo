@@ -11,7 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 class SMCStructureGate:
-    name = "smc_structure"
+    # Must match the ``market_structure_smc`` weight key in
+    # ``strategy.GateWeight`` / DEFAULT_CONFIG and the regime-multiplier key
+    # in ``confluence.REGIME_MULTIPLIERS``. A mismatch drops this gate's weight
+    # to 0.0, excluding it from quorum and tanking data_completeness.
+    name = "market_structure_smc"
 
     async def evaluate(self, ctx: GateContext) -> GateEvaluation:
         candles = ctx.candles
