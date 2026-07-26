@@ -151,6 +151,12 @@ async def ingest_news(db: Session) -> int:
 
     all_news = await fetch_all_feeds(max_age_hours=24.0)
     new_count = 0
+    # Track URLs seen in THIS batch. The DB check below only sees committed
+    # rows, so without this a story syndicated across feeds (same URL twice in
+    # one batch) would be added twice and fail the UNIQUE constraint at commit,
+    # taking the whole batch down. url is truncated to 1000 before storing, so
+    # dedupe on the truncated value to match what actually lands in the column.
+    seen_urls: set[str] = set()
 
     for item in all_news:
         text = f"{item.title} {item.summary}"
@@ -158,10 +164,14 @@ async def ingest_news(db: Session) -> int:
         if not tickers and not is_macro_relevant(text):
             continue
 
-        # Skip duplicates (unique URL constraint)
-        existing = db.query(NewsItemRow).filter(NewsItemRow.url == item.link).first()
+        url = item.link[:1000]
+        # Skip duplicates (unique URL constraint) — both in-batch and already persisted.
+        if url in seen_urls:
+            continue
+        existing = db.query(NewsItemRow).filter(NewsItemRow.url == url).first()
         if existing:
             continue
+        seen_urls.add(url)
 
         scores = analyze_sentiment(text)
         pub_dt = datetime.fromtimestamp(item.published, tz=timezone.utc) if item.published else None
@@ -169,7 +179,7 @@ async def ingest_news(db: Session) -> int:
         row = NewsItemRow(
             source=item.source,
             title=item.title[:500],
-            url=item.link[:1000],
+            url=url,
             published_at=pub_dt,
             symbol_relevance=tickers,
             sentiment_score=scores.get("compound"),
@@ -179,5 +189,11 @@ async def ingest_news(db: Session) -> int:
         new_count += 1
 
     if new_count:
-        db.commit()
+        try:
+            db.commit()
+        except Exception:
+            # Defensive: if a concurrent refresh committed an overlapping URL
+            # between our check and commit, don't lose the whole batch.
+            db.rollback()
+            raise
     return new_count
